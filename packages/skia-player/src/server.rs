@@ -101,6 +101,9 @@ impl AMLLWebSocketServer {
 
         while let Some(Ok(data)) = read.next().await {
             match ws_protocol::parse_body(&data.into_data()) {
+                Ok(Body::OnPlayProgress { progress }) => {
+                    sender.send(Body::OnPlayProgress { progress }).await?;
+                }
                 Ok(body) => {
                     debug!("已接收 WebSocket 客户端 {addr} 的数据: {body:?}");
                     // sender.emit_all("on-client-body", body)?;

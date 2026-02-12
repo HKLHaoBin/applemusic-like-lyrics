@@ -15,3 +15,8 @@ target/
 .yarn/install-state.gz
 .nx
 .idea
+.vscode/
+*.tsbuildinfo
+.million/
+.iflow
+settings.json

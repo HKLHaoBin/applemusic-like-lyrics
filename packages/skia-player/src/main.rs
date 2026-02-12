@@ -1,9 +1,7 @@
 mod renderer;
 mod server;
 mod window;
-use std::time::Instant;
 
-use skia_safe::{gpu::gl::FramebufferInfo, Color4f, Data, Font, MaskFilter, TextBlob, Typeface};
 use tracing::*;
 use ws_protocol::Body;
 
@@ -31,14 +29,16 @@ fn main() {
     std::thread::spawn(move || {
         while let Ok(body) = rx.recv_blocking() {
             match body {
-                Body::SetMusicAlbumCoverImageURL { img_url } => {
+                Body::SetMusicAlbumCoverImageURI { img_url } => {
                     let img_url = img_url.to_string();
                     let win_sx = win_sx.clone();
                     // TODO: 确保同步
                     std::thread::spawn(move || match attohttpc::get(img_url).send() {
                         Ok(res) => match res.bytes() {
                             Ok(data) => {
-                                if let Err(err) = win_sx.send(GlobalMessage::SetAlbumImageData(data)) {
+                                if let Err(err) =
+                                    win_sx.send(GlobalMessage::SetAlbumImageData(data))
+                                {
                                     warn!("Failed to send message to window: {}", err)
                                 }
                             }
@@ -66,8 +66,8 @@ fn main() {
             let canvas = win.canvas();
             renderer.render(canvas);
         }
-        WindowEvent::WindowResize(w, h) => {
-            renderer.set_size(w as _, h as _);
+        WindowEvent::WindowResize(w, h, scale) => {
+            renderer.set_size(w as _, h as _, scale);
         }
         WindowEvent::VSyncEnabled(enabled) => {
             renderer.set_vsync(enabled);

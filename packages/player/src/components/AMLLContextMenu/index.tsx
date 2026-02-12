@@ -1,21 +1,24 @@
 import {
 	hideLyricViewAtom,
 	isLyricPageOpenedAtom,
+	musicIdAtom,
 	onPlayOrResumeAtom,
 	onRequestNextSongAtom,
 	onRequestPrevSongAtom,
 } from "@applemusic-like-lyrics/react-full";
 import { ContextMenu } from "@radix-ui/themes";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import type { FC } from "react";
 import { Trans } from "react-i18next";
 import { router } from "../../router.tsx";
-import { musicIdAtom } from "../../states/index.ts";
+import { recordPanelOpenedAtom } from "../../states/appAtoms.ts";
 
 export const AMLLContextMenuContent: FC = () => {
 	const [hideLyricView, setHideLyricView] = useAtom(hideLyricViewAtom);
 	const setLyricPageOpened = useSetAtom(isLyricPageOpenedAtom);
+	const setRecordPanelOpened = useSetAtom(recordPanelOpenedAtom);
 	const onRequestPrevSong = useAtomValue(onRequestPrevSongAtom).onEmit;
 	const onRequestNextSong = useAtomValue(onRequestNextSongAtom).onEmit;
 	const onPlayOrResume = useAtomValue(onPlayOrResumeAtom).onEmit;
@@ -60,6 +63,23 @@ export const AMLLContextMenuContent: FC = () => {
 			>
 				<Trans i18nKey="amll.contextMenu.editMusicOverrideMessage">
 					编辑歌曲覆盖信息
+				</Trans>
+			</ContextMenu.Item>
+			<ContextMenu.Separator />
+			<ContextMenu.Item
+				onClick={() => {
+					setRecordPanelOpened(true);
+				}}
+			>
+				<Trans i18nKey="amll.contextMenu.openRecorder">打开捕获面板</Trans>
+			</ContextMenu.Item>
+			<ContextMenu.Item
+				onClick={() => {
+					invoke("open_screenshot_window");
+				}}
+			>
+				<Trans i18nKey="amll.contextMenu.openScreenshotTool">
+					打开截图工具
 				</Trans>
 			</ContextMenu.Item>
 			<ContextMenu.Separator />

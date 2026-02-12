@@ -1,11 +1,11 @@
-import type { CanvasLyricPlayer } from ".";
-import type { LyricLine } from "../../interfaces";
-import { chunkAndSplitLyricWords } from "../../utils/lyric-split-words";
-import { LyricLineBase } from "../base";
+import type { LyricLine } from "../../interfaces.ts";
+import { chunkAndSplitLyricWords } from "../../utils/lyric-split-words.ts";
+import { LyricLineBase } from "../base.ts";
+import type { CanvasLyricPlayer } from "./index.ts";
 import {
+	layoutLine,
 	type TextLayoutConfig,
 	type TextLayoutResult,
-	layoutLine,
 } from "./text-layout";
 
 export class CanvasLyricLine extends LyricLineBase {
@@ -29,7 +29,7 @@ export class CanvasLyricLine extends LyricLineBase {
 		return this.line;
 	}
 	private lineSize: [number, number] = [0, 0];
-	override measureSize(): [number, number] {
+	measureSize(): [number, number] {
 		const maxMainLineIndex = Math.max(
 			0,
 			...this.layoutWords.flat().map((w) => w.lineIndex + 1),
@@ -135,13 +135,8 @@ export class CanvasLyricLine extends LyricLineBase {
 			);
 		}
 	}
-	private enabled = false;
-	override enable(): void {
-		this.enabled = true;
-	}
-	override disable(): void {
-		this.enabled = false;
-	}
+	override enable(): void {}
+	override disable(): void {}
 	override resume(): void {}
 	override pause(): void {}
 	override setTransform(

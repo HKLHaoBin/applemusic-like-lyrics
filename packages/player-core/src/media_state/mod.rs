@@ -18,6 +18,7 @@ pub enum MediaStateMessage {
 
 pub(super) trait MediaStateManagerBackend: Sized + Send + Sync + Debug {
     fn new() -> anyhow::Result<(Self, UnboundedReceiver<MediaStateMessage>)>;
+    fn set_enabled(&self, enabled: bool) -> anyhow::Result<()>;
     fn set_playing(&self, playing: bool) -> anyhow::Result<()>;
     fn set_title(&self, title: &str) -> anyhow::Result<()>;
     fn set_artist(&self, artist: &str) -> anyhow::Result<()>;
@@ -27,12 +28,18 @@ pub(super) trait MediaStateManagerBackend: Sized + Send + Sync + Debug {
     fn update(&self) -> anyhow::Result<()>;
 }
 
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 #[derive(Debug)]
 pub struct EmptyMediaStateManager;
 
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 impl MediaStateManagerBackend for EmptyMediaStateManager {
     fn new() -> anyhow::Result<(Self, UnboundedReceiver<MediaStateMessage>)> {
         Ok((Self, tokio::sync::mpsc::unbounded_channel().1))
+    }
+
+    fn set_enabled(&self, _enabled: bool) -> anyhow::Result<()> {
+        Ok(())
     }
 
     fn set_playing(&self, _playing: bool) -> anyhow::Result<()> {

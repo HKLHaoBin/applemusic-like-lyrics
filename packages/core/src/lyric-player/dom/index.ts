@@ -4,12 +4,11 @@
  * @author SteveXMH
  */
 
-import type { LyricLine } from "../../interfaces";
+import type { LyricLine } from "../../interfaces.ts";
 import "../../styles/index.css";
 import styles from "../../styles/lyric-player.module.css";
-import { debounce } from "../../utils/debounce.js";
-import { LyricPlayerBase } from "../base";
-import { LyricLineEl, type RawLyricLineMouseEvent } from "./lyric-line";
+import { type LyricLineBase, LyricPlayerBase } from "../base.ts";
+import { LyricLineEl, type RawLyricLineMouseEvent } from "./lyric-line.ts";
 
 /**
  * 歌词行鼠标相关事件，可以获取到歌词行的索引和歌词行元素
@@ -23,7 +22,7 @@ export class LyricLineMouseEvent extends MouseEvent {
 		/**
 		 * 歌词行元素
 		 */
-		public readonly line: LyricLineEl,
+		public readonly line: LyricLineBase,
 		event: MouseEvent,
 	) {
 		super(`line-${event.type}`, event);
@@ -40,40 +39,10 @@ export type LyricLineMouseEventListener = (evt: LyricLineMouseEvent) => void;
 export class DomLyricPlayer extends LyricPlayerBase {
 	override currentLyricLineObjects: LyricLineEl[] = [];
 
-	private debounceCalcLayout = debounce(
-		() =>
-			this.calcLayout(true, true).then(() =>
-				this.currentLyricLineObjects.map(async (el, i) => {
-					el.markMaskImageDirty("DomLyricPlayer onResize");
-					await el.waitMaskImageUpdated();
-					if (this.hotLines.has(i)) {
-						el.enable(this.currentTime);
-						el.resume();
-					}
-				}),
-			),
-		100,
-	);
-
 	override onResize(): void {
 		const computedStyles = getComputedStyle(this.element);
 		this._baseFontSize = Number.parseFloat(computedStyles.fontSize);
-		const innerWidth =
-			this.element.clientWidth -
-			Number.parseFloat(computedStyles.paddingLeft) -
-			Number.parseFloat(computedStyles.paddingRight);
-		const innerHeight =
-			this.element.clientHeight -
-			Number.parseFloat(computedStyles.paddingTop) -
-			Number.parseFloat(computedStyles.paddingBottom);
-		this.innerSize[0] = innerWidth;
-		this.innerSize[1] = innerHeight;
 		this.rebuildStyle();
-		for (const obj of this.currentLyricLineObjects) {
-			if (!obj.getElement().classList.contains(styles.dirty))
-				obj.getElement().classList.add(styles.dirty);
-		}
-		this.debounceCalcLayout();
 	}
 
 	readonly supportPlusLighter = CSS.supports("mix-blend-mode", "plus-lighter");
@@ -114,19 +83,19 @@ export class DomLyricPlayer extends LyricPlayerBase {
 	}
 
 	private rebuildStyle() {
-		const width = this.innerSize[0];
-		const height = this.innerSize[1];
-		this.element.style.setProperty("--amll-lp-width", `${width.toFixed(4)}px`);
-		this.element.style.setProperty(
-			"--amll-lp-height",
-			`${height.toFixed(4)}px`,
-		);
+		// const width = this.innerSize[0];
+		// const height = this.innerSize[1];
+		// this.element.style.setProperty("--amll-lp-width", `${width.toFixed(4)}px`);
+		// this.element.style.setProperty(
+		// 	"--amll-lp-height",
+		// 	`${height.toFixed(4)}px`,
+		// );
 	}
 
 	override setWordFadeWidth(value = 0.5) {
 		super.setWordFadeWidth(value);
 		for (const el of this.currentLyricLineObjects) {
-			el.markMaskImageDirty("DomLyricPlayer setWordFadeWidth");
+			el.updateMaskImageSync();
 		}
 	}
 
@@ -137,8 +106,13 @@ export class DomLyricPlayer extends LyricPlayerBase {
 	 */
 	override setLyricLines(lines: LyricLine[], initialTime = 0) {
 		super.setLyricLines(lines, initialTime);
-		if (!this.isNonDynamic) {
+		if (this.hasDuetLine) {
 			this.element.classList.add(styles.hasDuetLine);
+		} else {
+			this.element.classList.remove(styles.hasDuetLine);
+		}
+		if (!this.supportMaskImage) {
+			this.element.style.setProperty("--amll-player-time", `${initialTime}`);
 		}
 
 		for (const line of this.currentLyricLineObjects) {
@@ -152,22 +126,24 @@ export class DomLyricPlayer extends LyricPlayerBase {
 			const lineEl = new LyricLineEl(this, line);
 			lineEl.addMouseEventListener("click", this.onLineClickedHandler);
 			lineEl.addMouseEventListener("contextmenu", this.onLineClickedHandler);
-			this.element.appendChild(lineEl.getElement());
+			// 不立即挂载到 DOM，进入视图（含 overscan）后在 LyricLineEl 内部挂载
 			this.lyricLinesIndexes.set(lineEl, i);
-			lineEl.markMaskImageDirty("DomLyricPlayer setLyricLines");
+			// 仍需建立元素到行对象的映射，供 ResizeObserver 使用
+			this.lyricLineElementMap.set(lineEl.getElement(), lineEl);
 			return lineEl;
 		});
 
 		this.setLinePosXSpringParams({});
 		this.setLinePosYSpringParams({});
 		this.setLineScaleSpringParams({});
-		this.calcLayout(true, true).then(() => {
-			this.initialLayoutFinished = true;
-		});
+		this.calcLayout(true);
+		// 触发一次更新以便立即挂载在视区/overscan 内的行元素
+		this.update(0);
 	}
 
 	override pause() {
 		super.pause();
+		this.element.classList.remove("playing");
 		this.interludeDots.pause();
 		for (const line of this.currentLyricLineObjects) {
 			line.pause();
@@ -176,6 +152,7 @@ export class DomLyricPlayer extends LyricPlayerBase {
 
 	override resume() {
 		super.resume();
+		this.element.classList.add("playing");
 		this.interludeDots.resume();
 		for (const line of this.currentLyricLineObjects) {
 			line.resume();
@@ -185,6 +162,12 @@ export class DomLyricPlayer extends LyricPlayerBase {
 	override update(delta = 0) {
 		if (!this.initialLayoutFinished) return;
 		super.update(delta);
+		if (!this.supportMaskImage) {
+			this.element.style.setProperty(
+				"--amll-player-time",
+				`${this.currentTime}`,
+			);
+		}
 		if (!this.isPageVisible) return;
 		const deltaS = delta / 1000;
 		this.interludeDots.update(delta);

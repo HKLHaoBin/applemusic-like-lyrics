@@ -1,9 +1,17 @@
-import { LyricPlayer, type LyricPlayerRef } from "./lyric-player";
-import { BackgroundRender } from "./bg-render";
-import type { FC } from "react";
-import { useState, useRef, useCallback, useEffect } from "react";
-import { parseTTML } from "@applemusic-like-lyrics/ttml";
 import type { LyricLine } from "@applemusic-like-lyrics/core";
+import {
+	type LyricLine as RawLyricLine,
+	parseTTML,
+} from "@applemusic-like-lyrics/lyric";
+import type { FC } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { BackgroundRender } from "./bg-render";
+import { LyricPlayer, type LyricPlayerRef } from "./lyric-player";
+
+const mapTTMLLyric = (line: RawLyricLine): LyricLine => ({
+	...line,
+	words: line.words.map((word) => ({ obscene: false, ...word })),
+});
 
 export const App: FC = () => {
 	const audioRef = useRef<HTMLAudioElement>(null);
@@ -55,7 +63,7 @@ export const App: FC = () => {
 			const file = input.files?.[0];
 			if (file) {
 				const text = await file.text();
-				setLyricLines(parseTTML(text).lyricLines);
+				setLyricLines(parseTTML(text).lines.map(mapTTMLLyric));
 			}
 		};
 		input.click();
@@ -82,14 +90,14 @@ export const App: FC = () => {
 				audioRef.current?.removeEventListener("play", onPlay);
 			};
 		}
-	}, [audioRef.current]);
+	}, []);
 	useEffect(() => {
 		// 调试用途，暴露到 Window
 		if (lyricPlayerRef.current) {
 			// biome-ignore lint/suspicious/noExplicitAny: <explanation>
 			(window as any).lyricPlayer = lyricPlayerRef.current;
 		}
-	}, [lyricPlayerRef.current]);
+	}, []);
 	return (
 		<>
 			<BackgroundRender

@@ -3,18 +3,51 @@
  * 已经部署好所有组件的歌词播放器组件，在正确设置所有的 Jotai 状态后可以开箱即用
  */
 
-import { BackgroundRender, LyricPlayer } from "@applemusic-like-lyrics/react";
+import {
+	BackgroundRender,
+	LyricPlayer,
+	type LyricPlayerRef,
+} from "@applemusic-like-lyrics/react";
 import structuredClone from "@ungap/structured-clone";
-import { useAtom, useAtomValue } from "jotai";
+import classNames from "classnames";
+import { AnimatePresence, LayoutGroup } from "framer-motion";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
 	type FC,
 	type HTMLProps,
+	useEffect,
 	useLayoutEffect,
 	useMemo,
 	useRef,
 	useState,
 } from "react";
 import { AutoLyricLayout } from "../../layout/auto";
+import { toDuration } from "../../utils";
+import { AudioFFTVisualizer } from "../AudioFFTVisualizer";
+import { AudioQualityTag } from "../AudioQualityTag";
+import { BouncingSlider } from "../BouncingSlider";
+import { ControlThumb } from "../ControlThumb";
+import { Cover } from "../Cover";
+import { MediaButton } from "../MediaButton";
+import { MusicInfo } from "../MusicInfo";
+import { PrebuiltToggleIconButton } from "../ToggleIconButton";
+import { PrebuiltToggleIconButtonType } from "../ToggleIconButton/prebuilt-enum";
+
+import { VolumeControl } from "../VolumeControlSlider";
+
+import IconForward from "./icon_forward.svg?react";
+import IconPause from "./icon_pause.svg?react";
+import IconPlay from "./icon_play.svg?react";
+import IconRewind from "./icon_rewind.svg?react";
+import RepeatIcon from "./repeat.svg?react";
+import RepeatActiveIcon from "./repeat-active.svg?react";
+import RepeatOneActiveIcon from "./repeat-one-active.svg?react";
+import ShuffleIcon from "./shuffle.svg?react";
+import ShuffleActiveIcon from "./shuffle-active.svg?react";
+
+import "./icon-animations.css";
+import React from "react";
+import { useThrottle } from "../../hook/useThrottle";
 import {
 	onChangeVolumeAtom,
 	onClickAudioQualityTagAtom,
@@ -26,11 +59,46 @@ import {
 	onRequestOpenMenuAtom,
 	onRequestPrevSongAtom,
 	onSeekPositionAtom,
-} from "../../states/callback";
+} from "../../states/callbacks";
 import {
-	fftDataAtom,
+	cssBackgroundPropertyAtom,
+	enableLyricLineBlurEffectAtom,
+	enableLyricLineScaleEffectAtom,
+	enableLyricLineSpringAnimationAtom,
+	enableLyricRomanLineAtom,
+	enableLyricSwapTransRomanLineAtom,
+	enableLyricTranslationLineAtom,
 	hideLyricViewAtom,
 	isLyricPageOpenedAtom,
+	lyricBackgroundFPSAtom,
+	lyricBackgroundRendererAtom,
+	lyricBackgroundRenderScaleAtom,
+	lyricBackgroundStaticModeAtom,
+	lyricFontFamilyAtom,
+	lyricFontWeightAtom,
+	lyricLetterSpacingAtom,
+	lyricPlayerImplementationAtom,
+	lyricWordFadeWidthAtom,
+	PlayerControlsType,
+	playerControlsTypeAtom,
+	showBottomControlAtom,
+	showMusicAlbumAtom,
+	showMusicArtistsAtom,
+	showMusicNameAtom,
+	showRemainingTimeAtom,
+	showVolumeControlAtom,
+	VerticalCoverLayout,
+	verticalCoverLayoutAtom,
+} from "../../states/configAtoms";
+import {
+	cycleRepeatModeActionAtom,
+	isShuffleActiveAtom,
+	RepeatMode,
+	repeatModeAtom,
+	toggleShuffleActionAtom,
+} from "../../states/controlsAtoms";
+import {
+	fftDataAtom,
 	lowFreqVolumeAtom,
 	musicAlbumNameAtom,
 	musicArtistsAtom,
@@ -43,53 +111,8 @@ import {
 	musicPlayingPositionAtom,
 	musicQualityTagAtom,
 	musicVolumeAtom,
-} from "../../states/music";
-import { BouncingSlider } from "../BouncingSlider";
-import { ControlThumb } from "../ControlThumb";
-import { Cover } from "../Cover";
-import { MusicInfo } from "../MusicInfo";
-import { VolumeControl } from "../VolumeControlSlider";
-import "./icon-animations.css";
+} from "../../states/dataAtoms";
 import styles from "./index.module.css";
-
-import classNames from "classnames";
-import { AnimatePresence, LayoutGroup } from "framer-motion";
-import {
-	PlayerControlsType,
-	VerticalCoverLayout,
-	enableLyricLineBlurEffectAtom,
-	enableLyricLineScaleEffectAtom,
-	enableLyricLineSpringAnimationAtom,
-	enableLyricRomanLineAtom,
-	enableLyricSwapTransRomanLineAtom,
-	enableLyricTranslationLineAtom,
-	lyricBackgroundFPSAtom,
-	lyricBackgroundRenderScaleAtom,
-	lyricBackgroundRendererAtom,
-	lyricBackgroundStaticModeAtom,
-	lyricFontFamilyAtom,
-	lyricFontWeightAtom,
-	lyricLetterSpacingAtom,
-	lyricPlayerImplementationAtom,
-	lyricWordFadeWidthAtom,
-	playerControlsTypeAtom,
-	showBottomControlAtom,
-	showMusicAlbumAtom,
-	showMusicArtistsAtom,
-	showMusicNameAtom,
-	showVolumeControlAtom,
-	verticalCoverLayoutAtom,
-} from "../../states/config";
-import { toDuration } from "../../utils";
-import { AudioFFTVisualizer } from "../AudioFFTVisualizer";
-import { AudioQualityTag } from "../AudioQualityTag";
-import { MediaButton } from "../MediaButton";
-import { PrebuiltToggleIconButton } from "../ToggleIconButton";
-import { PrebuiltToggleIconButtonType } from "../ToggleIconButton/prebuilt-enum";
-import IconForward from "./icon_forward.svg?react";
-import IconPause from "./icon_pause.svg?react";
-import IconPlay from "./icon_play.svg?react";
-import IconRewind from "./icon_rewind.svg?react";
 
 const PrebuiltMusicInfo: FC<{
 	className?: string;
@@ -102,10 +125,23 @@ const PrebuiltMusicInfo: FC<{
 	const showMusicName = useAtomValue(showMusicNameAtom);
 	const showMusicArtists = useAtomValue(showMusicArtistsAtom);
 	const showMusicAlbum = useAtomValue(showMusicAlbumAtom);
+	const fontFamily = useAtomValue(lyricFontFamilyAtom);
+	const fontWeight = useAtomValue(lyricFontWeightAtom);
+	const letterSpacing = useAtomValue(lyricLetterSpacingAtom);
+	const combinedStyle = useMemo(
+		() => ({
+			...style,
+			fontFamily: fontFamily || undefined,
+			fontWeight: fontWeight || undefined,
+			letterSpacing: letterSpacing || undefined,
+		}),
+		[style, fontFamily, fontWeight, letterSpacing],
+	);
+
 	return (
 		<MusicInfo
 			className={className}
-			style={style}
+			style={combinedStyle}
 			name={showMusicName ? musicName : undefined}
 			artists={showMusicArtists ? musicArtists.map((v) => v.name) : undefined}
 			album={showMusicAlbum ? musicAlbum : undefined}
@@ -121,10 +157,40 @@ const PrebuiltMediaButtons: FC<{
 	const onRequestPrevSong = useAtomValue(onRequestPrevSongAtom).onEmit;
 	const onRequestNextSong = useAtomValue(onRequestNextSongAtom).onEmit;
 	const onPlayOrResume = useAtomValue(onPlayOrResumeAtom).onEmit;
+
+	const isShuffleOn = useAtomValue(isShuffleActiveAtom);
+	const currentRepeatMode = useAtomValue(repeatModeAtom);
+
+	const toggleShuffle = useSetAtom(toggleShuffleActionAtom);
+	const cycleRepeat = useSetAtom(cycleRepeatModeActionAtom);
+
+	const iconStyle = {
+		width: "1.3em",
+		height: "1.3em",
+	};
+
+	const renderRepeatIcon = () => {
+		switch (currentRepeatMode) {
+			case RepeatMode.One:
+				return <RepeatOneActiveIcon color="#ffffffff" style={iconStyle} />;
+			case RepeatMode.All:
+				return <RepeatActiveIcon color="#ffffffff" style={iconStyle} />;
+			case RepeatMode.Off:
+			default:
+				return <RepeatIcon color="#ffffffff" style={iconStyle} />;
+		}
+	};
+
 	return (
 		<>
 			{showOtherButtons && (
-				<PrebuiltToggleIconButton type={PrebuiltToggleIconButtonType.Shuffle} />
+				<MediaButton className={styles.songMediaButton} onClick={toggleShuffle}>
+					{isShuffleOn ? (
+						<ShuffleActiveIcon color="#ffffffff" style={iconStyle} />
+					) : (
+						<ShuffleIcon color="#ffffffff" style={iconStyle} />
+					)}
+				</MediaButton>
 			)}
 			<MediaButton
 				className={styles.songMediaButton}
@@ -148,55 +214,109 @@ const PrebuiltMediaButtons: FC<{
 			>
 				<IconForward color="#FFFFFF" />
 			</MediaButton>
+
 			{showOtherButtons && (
-				<PrebuiltToggleIconButton type={PrebuiltToggleIconButtonType.Repeat} />
+				<MediaButton className={styles.songMediaButton} onClick={cycleRepeat}>
+					{renderRepeatIcon()}
+				</MediaButton>
 			)}
 		</>
 	);
 };
 
-const PrebuiltProgressBar: FC = () => {
-	const musicDuration = useAtomValue(musicDurationAtom);
-	const musicPosition = useAtomValue(musicPlayingPositionAtom);
-	const musicQualityTag = useAtomValue(musicQualityTagAtom);
-	const onClickAudioQualityTag = useAtomValue(
-		onClickAudioQualityTagAtom,
-	).onEmit;
-	const onSeekPosition = useAtomValue(onSeekPositionAtom).onEmit;
-
-	return (
-		<div>
-			<BouncingSlider
-				value={musicPosition}
-				min={0}
-				max={musicDuration}
-				onChange={onSeekPosition}
-			/>
-			<div className={styles.progressBarLabels}>
-				<div>{toDuration(musicPosition / 1000)}</div>
-				<div>
-					<AnimatePresence mode="popLayout">
-						{musicQualityTag && (
-							<AudioQualityTag
-								className={styles.qualityTag}
-								isDolbyAtmos={musicQualityTag.isDolbyAtmos}
-								tagText={musicQualityTag.tagText}
-								tagIcon={musicQualityTag.tagIcon}
-								onClick={onClickAudioQualityTag}
-							/>
-						)}
-					</AnimatePresence>
-				</div>
-				<div>{toDuration((musicPosition - musicDuration) / 1000)}</div>
-			</div>
-		</div>
+const TimeLabel: FC<{ isRemaining?: boolean }> = ({ isRemaining }) => {
+	const currentPosition = useAtomValue(musicPlayingPositionAtom);
+	const duration = useAtomValue(musicDurationAtom);
+	const time = useMemo(
+		() =>
+			toDuration(
+				isRemaining
+					? (currentPosition - duration) / 1000
+					: currentPosition / 1000,
+			),
+		[currentPosition, duration, isRemaining],
 	);
+	return <>{time}</>;
 };
+
+const TotalDurationLabel: FC = () => {
+	const duration = useAtomValue(musicDurationAtom);
+	const time = useMemo(() => toDuration(duration / 1000), [duration]);
+	return <>{time}</>;
+};
+
+const PrebuiltProgressBar: FC<{ disabled?: boolean }> = React.memo(
+	({ disabled }) => {
+		const musicDuration = useAtomValue(musicDurationAtom);
+		const musicPosition = useAtomValue(musicPlayingPositionAtom);
+		const musicQualityTag = useAtomValue(musicQualityTagAtom);
+		const onClickAudioQualityTag = useAtomValue(
+			onClickAudioQualityTagAtom,
+		).onEmit;
+		const onSeekPosition = useAtomValue(onSeekPositionAtom).onEmit;
+
+		const [showRemaining, setShowRemaining] = useAtom(showRemainingTimeAtom);
+
+		const fontFamily = useAtomValue(lyricFontFamilyAtom);
+		const fontWeight = useAtomValue(lyricFontWeightAtom);
+		const letterSpacing = useAtomValue(lyricLetterSpacingAtom);
+
+		const fontStyle = useMemo(
+			() => ({
+				fontFamily: fontFamily || undefined,
+				fontWeight: fontWeight || undefined,
+				letterSpacing: letterSpacing || undefined,
+			}),
+			[fontFamily, fontWeight, letterSpacing],
+		);
+
+		const throttledSeek = useThrottle((position: number) => {
+			onSeekPosition?.(position);
+		}, 100);
+
+		return (
+			<div>
+				<BouncingSlider
+					min={0}
+					max={musicDuration}
+					value={musicPosition}
+					onChange={throttledSeek}
+					disabled={disabled}
+				/>
+				<div className={styles.progressBarLabels}>
+					<div style={fontStyle}>
+						<TimeLabel />
+					</div>
+					<div>
+						<AnimatePresence mode="popLayout">
+							{musicQualityTag && (
+								<AudioQualityTag
+									className={styles.qualityTag}
+									isDolbyAtmos={musicQualityTag.isDolbyAtmos}
+									tagText={musicQualityTag.tagText}
+									tagIcon={musicQualityTag.tagIcon}
+									onClick={onClickAudioQualityTag}
+								/>
+							)}
+						</AnimatePresence>
+					</div>
+					<div
+						style={{ ...fontStyle, cursor: "pointer", userSelect: "none" }}
+						onClick={() => setShowRemaining(!showRemaining)}
+					>
+						{showRemaining ? <TimeLabel isRemaining /> : <TotalDurationLabel />}
+					</div>
+				</div>
+			</div>
+		);
+	},
+);
 
 const PrebuiltCoreLyricPlayer: FC<{
 	alignPosition: number;
 	alignAnchor: "center" | "bottom" | "top";
 }> = ({ alignPosition, alignAnchor }) => {
+	const amllPlayerRef = useRef<LyricPlayerRef>(null);
 	const musicIsPlaying = useAtomValue(musicPlayingAtom);
 	const lyricLines = useAtomValue(musicLyricLinesAtom);
 	const isLyricPageOpened = useAtomValue(isLyricPageOpenedAtom);
@@ -250,7 +370,15 @@ const PrebuiltCoreLyricPlayer: FC<{
 				];
 			}
 		}
-		return processed;
+		return processed.map((line: any) => ({
+			...line,
+			words: Array.isArray(line.words)
+				? line.words.map((word: any) => ({
+						...word,
+						obscene: typeof word.obscene === "boolean" ? word.obscene : false,
+					}))
+				: [],
+		}));
 	}, [
 		lyricLines,
 		enableLyricTranslationLine,
@@ -267,6 +395,7 @@ const PrebuiltCoreLyricPlayer: FC<{
 				fontWeight: lyricFontWeight || undefined,
 				letterSpacing: lyricLetterSpacing || undefined,
 			}}
+			ref={amllPlayerRef}
 			playing={musicIsPlaying}
 			disabled={!isLyricPageOpened}
 			alignPosition={alignPosition}
@@ -278,8 +407,10 @@ const PrebuiltCoreLyricPlayer: FC<{
 			enableSpring={enableLyricLineSpringAnimation}
 			wordFadeWidth={Math.max(0.01, lyricWordFadeWidth)}
 			lyricPlayer={lyricPlayerImplementation}
-			onLyricLineClick={onLyricLineClick}
-			onLyricLineContextMenu={onLyricLineContextMenu}
+			onLyricLineClick={(evt) => onLyricLineClick?.(evt, amllPlayerRef.current)}
+			onLyricLineContextMenu={(evt) =>
+				onLyricLineContextMenu?.(evt, amllPlayerRef.current)
+			}
 		/>
 	);
 };
@@ -291,6 +422,11 @@ const PrebuiltVolumeControl: FC<{
 	const musicVolume = useAtomValue(musicVolumeAtom);
 	const onChangeVolume = useAtomValue(onChangeVolumeAtom).onEmit;
 	const showVolumeControl = useAtomValue(showVolumeControlAtom);
+
+	const throttledOnChangeVolume = useThrottle((volume: number) => {
+		onChangeVolume?.(volume);
+	}, 100);
+
 	if (showVolumeControl)
 		return (
 			<VolumeControl
@@ -299,7 +435,7 @@ const PrebuiltVolumeControl: FC<{
 				max={1}
 				style={style}
 				className={className}
-				onChange={onChangeVolume}
+				onChange={throttledOnChangeVolume}
 			/>
 		);
 	return null;
@@ -355,10 +491,15 @@ export const PrebuiltLyricPlayer: FC<HTMLProps<HTMLDivElement>> = ({
 	const [alignAnchor, setAlignAnchor] = useState<"center" | "bottom" | "top">(
 		"top",
 	);
-	const coverElRef = useRef<HTMLElement>(null);
+	const coverElRef = useRef<HTMLDivElement>(null);
 	const layoutRef = useRef<HTMLDivElement>(null);
 	const backgroundRenderer = useAtomValue(lyricBackgroundRendererAtom);
 	const showBottomControl = useAtomValue(showBottomControlAtom);
+
+	const [isHoveringTitlebar, setIsHoveringTitlebar] = useState(false);
+	const [isGracePeriodOver, setIsGracePeriodOver] = useState(false);
+
+	const cssBackgroundProperty = useAtomValue(cssBackgroundPropertyAtom);
 
 	useLayoutEffect(() => {
 		// 如果是水平布局，则让歌词对齐到封面的中心
@@ -382,6 +523,50 @@ export const PrebuiltLyricPlayer: FC<HTMLProps<HTMLDivElement>> = ({
 			setAlignAnchor("top");
 		}
 	}, [isVertical]);
+
+	useEffect(() => {
+		if (isLyricPageOpened) {
+			setIsGracePeriodOver(false);
+			const timerId = setTimeout(() => {
+				setIsGracePeriodOver(true);
+			}, 5000);
+			return () => clearTimeout(timerId);
+		}
+	}, [isLyricPageOpened]);
+
+	useEffect(() => {
+		const titlebarArea = document.getElementById("system-titlebar");
+		if (!titlebarArea) return;
+
+		const handleMouseEnter = () => setIsHoveringTitlebar(true);
+		const handleMouseLeave = () => setIsHoveringTitlebar(false);
+
+		if (isLyricPageOpened) {
+			titlebarArea.addEventListener("mouseenter", handleMouseEnter);
+			titlebarArea.addEventListener("mouseleave", handleMouseLeave);
+		} else {
+			setIsHoveringTitlebar(false);
+		}
+
+		return () => {
+			titlebarArea.removeEventListener("mouseenter", handleMouseEnter);
+			titlebarArea.removeEventListener("mouseleave", handleMouseLeave);
+		};
+	}, [isLyricPageOpened]);
+
+	useEffect(() => {
+		const titlebarButtons = document.getElementById("system-titlebar-buttons");
+		if (!titlebarButtons) return;
+
+		titlebarButtons.style.transition =
+			"opacity 0.3s ease-in-out, pointer-events 0.3s";
+
+		const shouldBeVisible =
+			!isLyricPageOpened || isHoveringTitlebar || !isGracePeriodOver;
+
+		titlebarButtons.style.opacity = shouldBeVisible ? "1" : "0";
+		titlebarButtons.style.pointerEvents = shouldBeVisible ? "auto" : "none";
+	}, [isLyricPageOpened, isHoveringTitlebar, isGracePeriodOver]);
 
 	const verticalImmerseCover =
 		hideLyricView &&
@@ -416,18 +601,33 @@ export const PrebuiltLyricPlayer: FC<HTMLProps<HTMLDivElement>> = ({
 					/>
 				}
 				backgroundSlot={
-					<BackgroundRender
-						album={musicCover}
-						albumIsVideo={musicCoverIsVideo}
-						lowFreqVolume={lowFreqVolume}
-						renderScale={lyricBackgroundRenderScale}
-						fps={lyricBackgroundFPS}
-						renderer={backgroundRenderer.renderer}
-						staticMode={lyricBackgroundStaticMode || !isLyricPageOpened}
-						style={{
-							zIndex: -1,
-						}}
-					/>
+					typeof backgroundRenderer.renderer === "string" &&
+					backgroundRenderer.renderer === "css-bg" ? (
+						<div
+							style={{
+								zIndex: -1,
+								width: "100%",
+								height: "100%",
+								minWidth: "0",
+								minHeight: "0",
+								overflow: "hidden",
+								background: cssBackgroundProperty,
+							}}
+						/>
+					) : (
+						<BackgroundRender
+							album={musicCover}
+							albumIsVideo={musicCoverIsVideo}
+							lowFreqVolume={lowFreqVolume}
+							renderScale={lyricBackgroundRenderScale}
+							fps={lyricBackgroundFPS}
+							renderer={(backgroundRenderer as any).renderer}
+							staticMode={lyricBackgroundStaticMode || !isLyricPageOpened}
+							style={{
+								zIndex: -1,
+							}}
+						/>
+					)
 				}
 				bigControlsSlot={
 					<>

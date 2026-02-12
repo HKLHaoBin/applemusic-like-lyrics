@@ -21,14 +21,14 @@ import styles from "./index.module.css";
  * 一个专辑图组件
  */
 export const Cover = forwardRef<
-	HTMLDivElement | null,
+	HTMLDivElement,
 	{
 		coverUrl?: string;
 		coverIsVideo?: boolean;
 		coverVideoPaused?: boolean;
 		musicPaused?: boolean;
 		pauseShrinkAspect?: number;
-	} & HTMLProps<HTMLDivElement>
+	} & HTMLProps<HTMLElement>
 >(
 	(
 		{
@@ -82,16 +82,17 @@ export const Cover = forwardRef<
 		return (
 			<div
 				className={clsNames}
-				style={{
-					"--scale-level": pauseShrinkAspect ?? 0.75,
-				}}
+				style={
+					{
+						"--scale-level": pauseShrinkAspect ?? 0.75,
+					} as React.CSSProperties
+				}
 				ref={frameRef}
 				{...rest}
 			>
 				<Squircle
 					cornerRadius={cornerRadius}
 					cornerSmoothing={0.7}
-					alt="cover"
 					className={styles.coverInner}
 				>
 					{coverIsVideo ? (
@@ -110,10 +111,12 @@ export const Cover = forwardRef<
 						<div
 							className={styles.coverInner}
 							alt="cover"
-							style={{
-								backgroundImage: `url(${coverUrl})`,
-								"--scale-level": pauseShrinkAspect ?? 0.75,
-							}}
+							style={
+								{
+									backgroundImage: `url(${coverUrl})`,
+									"--scale-level": pauseShrinkAspect ?? 0.75,
+								} as React.CSSProperties
+							}
 							{...rest}
 						/>
 					)}

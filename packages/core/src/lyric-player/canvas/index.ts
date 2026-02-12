@@ -1,6 +1,6 @@
-import type { LyricLine } from "../../interfaces";
-import { LyricPlayerBase } from "../base";
-import { CanvasLyricLine } from "./lyric-line";
+import type { LyricLine } from "../../interfaces.ts";
+import { LyricPlayerBase } from "../base.ts";
+import { CanvasLyricLine } from "./lyric-line.ts";
 
 export class CanvasLyricPlayer extends LyricPlayerBase {
 	private canvasElement = document.createElement("canvas");
@@ -43,10 +43,9 @@ export class CanvasLyricPlayer extends LyricPlayerBase {
 			(line) => new CanvasLyricLine(this, line),
 		);
 
-		this.setLinePosXSpringParams({});
 		this.setLinePosYSpringParams({});
 		this.setLineScaleSpringParams({});
-		this.calcLayout(true, true);
+		this.calcLayout(true);
 	}
 	override onResize(): void {
 		const computedStyle = getComputedStyle(this.element);
@@ -62,7 +61,7 @@ export class CanvasLyricPlayer extends LyricPlayerBase {
 			line.relayout();
 		}
 		console.log("CanvasLyricPlayer.onResize", this.size);
-		this.calcLayout(true, true);
+		this.calcLayout(true);
 	}
 	/**
 	 * @internal

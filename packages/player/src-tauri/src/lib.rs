@@ -1,44 +1,77 @@
 use crate::server::AMLLWebSocketServer;
 use amll_player_core::AudioInfo;
+use anyhow::Context;
+use ffmpeg_next as ffmpeg;
 use serde::*;
 use serde_json::Value;
-use std::sync::RwLock;
-use std::{net::SocketAddr, path::Path};
-use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
+use std::net::SocketAddr;
+use tauri::ipc::Channel;
 use tauri::{
-    utils::config::WindowEffectsConfig, window::Effect, AppHandle, Manager, PhysicalSize, Runtime,
-    Size, State, Theme, WebviewWindowBuilder,
+    AppHandle, Manager, PhysicalSize, Runtime, Size, State, WebviewWindowBuilder,
+    utils::config::WindowEffectsConfig, window::Effect,
 };
-use tauri_plugin_fs::OpenOptions;
+use tokio::sync::RwLock;
 use tracing::*;
 
-mod client;
 mod player;
+mod screen_capture;
 mod server;
+
+#[cfg(target_os = "windows")]
+mod external_media_controller;
 
 pub type AMLLWebSocketServerWrapper = RwLock<AMLLWebSocketServer>;
 pub type AMLLWebSocketServerState<'r> = State<'r, AMLLWebSocketServerWrapper>;
 
 // Learn more about Tauri commands at https://tauri.app/v1/guides/features/command
 #[tauri::command]
-fn ws_reopen_connection(addr: &str, ws: AMLLWebSocketServerState) {
-    ws.write().unwrap().reopen(addr.to_string());
+async fn ws_reopen_connection(
+    addr: &str,
+    ws: AMLLWebSocketServerState<'_>,
+    channel: Channel<ws_protocol::v2::Payload>,
+) -> Result<(), String> {
+    ws.write().await.reopen(addr.to_string(), channel);
+    Ok(())
 }
 
 #[tauri::command]
-fn ws_get_connections(ws: AMLLWebSocketServerState) -> Vec<SocketAddr> {
-    ws.read().unwrap().get_connections()
+async fn ws_close_connection(ws: AMLLWebSocketServerState<'_>) -> Result<(), String> {
+    ws.write().await.close().await;
+    Ok(())
 }
 
 #[tauri::command]
-fn ws_boardcast_message(ws: AMLLWebSocketServerState, data: ws_protocol::Body) {
-    let ws = ws.clone();
-    tauri::async_runtime::block_on(ws.write().unwrap().boardcast_message(data));
+async fn ws_get_connections(ws: AMLLWebSocketServerState<'_>) -> Result<Vec<SocketAddr>, String> {
+    let server_guard = ws.read().await;
+    let connections = server_guard.get_connections().await;
+    Ok(connections)
+}
+
+#[tauri::command]
+async fn ws_broadcast_payload(
+    ws: AMLLWebSocketServerState<'_>,
+    payload: ws_protocol::v2::Payload,
+) -> Result<(), String> {
+    ws.write().await.broadcast_payload(payload).await;
+    Ok(())
 }
 
 #[tauri::command]
 fn restart_app<R: Runtime>(app: AppHandle<R>) {
     tauri::process::restart(&app.env())
+}
+
+#[tauri::command]
+async fn reset_window_theme<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        #[cfg(desktop)]
+        if let Err(e) = window.set_theme(None) {
+            return Err(e.to_string());
+        }
+        Ok(())
+    } else {
+        Err("Main window not found.".to_string())
+    }
 }
 
 #[derive(Default, Clone, Serialize, Deserialize)]
@@ -78,68 +111,56 @@ async fn read_local_music_metadata(
     file_path: tauri_plugin_fs::FilePath,
     fs: State<'_, tauri_plugin_fs::Fs<tauri::Wry>>,
 ) -> Result<MusicInfo, String> {
-    let mut opt = OpenOptions::new();
-    opt.read(true);
-    let file = fs
-        .open(file_path.clone(), opt)
-        .map_err(|e| format!("文件打开失败 {e}"))?;
-    let result = tokio::task::spawn_blocking(move || -> Result<MusicInfo, String> {
-        let probe = symphonia::default::get_probe();
-        let mut format_result = probe
-            .format(
-                &Default::default(),
-                MediaSourceStream::new(Box::new(file), MediaSourceStreamOptions::default()),
-                &Default::default(),
-                &Default::default(),
-            )
-            .map_err(|e| e.to_string())?;
+    let path_clone = file_path
+        .as_path()
+        .context("Invalid file path")
+        .map_err(|e| e.to_string())?
+        .to_path_buf();
 
-        Ok(amll_player_core::utils::read_audio_info(&mut format_result).into())
+    let audio_info = tokio::task::spawn_blocking(move || -> anyhow::Result<AudioInfo> {
+        let mut input_ctx = ffmpeg::format::input(&path_clone)
+            .with_context(|| format!("无法打开文件: {}", path_clone.display()))?;
+        let mut info = amll_player_core::utils::read_audio_info(&mut input_ctx);
+        if let Some(stream) = input_ctx.streams().best(ffmpeg::media::Type::Audio) {
+            let time_base = stream.time_base();
+            let duration = stream.duration();
+            info.duration = duration as f64 * time_base.0 as f64 / time_base.1 as f64;
+        }
+        Ok(info)
     })
-    .await;
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
 
-    const LYRIC_FILE_EXTENSIONS: &[&str] = &["ttml", "lys", "yrc", "qrc", "eslrc", "lrc"];
+    let mut music_info: MusicInfo = audio_info.into();
 
-    match result {
-        Ok(Ok(mut result)) => {
-            if !result.lyric.is_empty() {
-                result.lyric_format = "lrc".into();
-            }
-            if let Some(file_path) = file_path.as_path() {
-                for ext in LYRIC_FILE_EXTENSIONS {
-                    let lyric_file_path = file_path.with_extension(ext);
-                    if lyric_file_path.exists() {
-                        if let Ok(lyric) = fs.read_to_string(&lyric_file_path) {
-                            result.lyric_format = ext.to_string();
-                            result.lyric = lyric;
-                            break;
-                        } else {
-                            warn!("歌词文件存在但读取失败: {}", lyric_file_path.display());
-                        }
-                    }
+    if let Some(file_path_ref) = file_path.as_path()
+        && music_info.lyric.is_empty()
+    {
+        const LYRIC_FILE_EXTENSIONS: &[&str] = &["ttml", "lys", "yrc", "qrc", "eslrc", "lrc"];
+        for ext in LYRIC_FILE_EXTENSIONS {
+            let lyric_file_path = file_path_ref.with_extension(ext);
+            if lyric_file_path.exists() {
+                if let Ok(lyric) = fs.read_to_string(&lyric_file_path) {
+                    music_info.lyric_format = ext.to_string();
+                    music_info.lyric = lyric;
+                    break;
+                } else {
+                    warn!("歌词文件存在但读取失败: {}", lyric_file_path.display());
                 }
             }
-            Ok(result)
         }
-        Ok(Err(e)) => Err(e),
-        Err(e) => Err(e.to_string()),
     }
+
+    Ok(music_info)
 }
 
-fn recreate_window(app: &AppHandle) {
-    if let Some(win) = app.get_webview_window("main") {
-        #[cfg(desktop)]
-        {
-            let _ = win.show();
-            let _ = win.set_focus();
-        }
-        return;
-    }
-    #[cfg(debug_assertions)]
-    let url = tauri::WebviewUrl::External(app.config().build.dev_url.clone().unwrap());
-    #[cfg(not(debug_assertions))]
-    let url = tauri::WebviewUrl::App("index.html".into());
-    let win: WebviewWindowBuilder<'_, _, _> = WebviewWindowBuilder::new(app, "main", url);
+async fn create_common_win<'a>(
+    app: &'a AppHandle,
+    url: tauri::WebviewUrl,
+    label: &str,
+) -> tauri::WebviewWindowBuilder<'a, tauri::Wry, AppHandle> {
+    let win = WebviewWindowBuilder::new(app, label, url);
     #[cfg(target_os = "windows")]
     let win = win.transparent(true);
     #[cfg(not(desktop))]
@@ -153,6 +174,7 @@ fn recreate_window(app: &AppHandle) {
             effects: vec![Effect::Tabbed, Effect::Mica],
             ..Default::default()
         })
+        .theme(None)
         .title({
             #[cfg(target_os = "macos")]
             {
@@ -187,6 +209,35 @@ fn recreate_window(app: &AppHandle) {
     #[cfg(target_os = "macos")]
     let win = win.title_bar_style(tauri::TitleBarStyle::Overlay);
 
+    win
+}
+
+async fn recreate_window(app: &AppHandle, label: &str, path: Option<&str>) {
+    info!("Recreating window: {}", label);
+    if let Some(win) = app.get_webview_window(label) {
+        #[cfg(desktop)]
+        {
+            let _ = win.show();
+            let _ = win.set_focus();
+        }
+        return;
+    }
+    #[cfg(debug_assertions)]
+    let url = {
+        tauri::WebviewUrl::External(
+            app.config()
+                .build
+                .dev_url
+                .clone()
+                .unwrap()
+                .join(path.unwrap_or(""))
+                .expect("Failed to create external URL"),
+        )
+    };
+    #[cfg(not(debug_assertions))]
+    let url = tauri::WebviewUrl::App(path.unwrap_or("index.html").into());
+    let win = create_common_win(app, url, label).await;
+
     let win = win.build().expect("can't show original window");
 
     #[cfg(desktop)]
@@ -197,6 +248,13 @@ fn recreate_window(app: &AppHandle) {
             let _ = win.set_size(orig_size);
         }
     }
+
+    info!("Created window: {}", label);
+}
+
+#[tauri::command]
+async fn open_screenshot_window(app: AppHandle) {
+    recreate_window(&app, "screenshot", Some("screenshot.html")).await;
 }
 
 fn init_logging() {
@@ -220,10 +278,9 @@ fn init_logging() {
     #[cfg(debug_assertions)]
     {
         tracing_subscriber::fmt()
-            .with_env_filter("amll_player=trace,wry=info")
+            .with_env_filter("amll_player=trace,smtc_suite=debug,wry=info")
             .with_thread_names(true)
             .with_timer(tracing_subscriber::fmt::time::uptime())
-            // .with(tracing_android::layer("amll-player").unwrap())
             .init();
     }
     std::panic::set_hook(Box::new(move |info| {
@@ -240,7 +297,7 @@ pub fn run() {
     #[allow(unused_mut)]
     let mut context = tauri::generate_context!();
 
-    let builder = tauri::Builder::default();
+    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
 
     #[cfg(not(mobile))]
     let pubkey = {
@@ -268,21 +325,42 @@ pub fn run() {
             })
     }
 
+    ffmpeg::init().expect("初始化 ffmpeg 失败");
+
     builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_http::init())
         .invoke_handler(tauri::generate_handler![
             ws_reopen_connection,
             ws_get_connections,
-            ws_boardcast_message,
+            ws_broadcast_payload,
+            ws_close_connection,
+            open_screenshot_window,
+            screen_capture::take_screenshot,
             player::local_player_send_msg,
+            player::set_media_controls_enabled,
             read_local_music_metadata,
             restart_app,
+            #[cfg(target_os = "windows")]
+            external_media_controller::control_external_media,
+            #[cfg(target_os = "windows")]
+            external_media_controller::request_smtc_update,
+            reset_window_theme,
         ])
         .setup(|app| {
             player::init_local_player(app.handle().clone());
+
+            #[cfg(target_os = "windows")]
+            {
+                info!("正在初始化外部媒体控制器...");
+                let controller_state =
+                    external_media_controller::start_listener(app.handle().clone());
+                app.manage(controller_state);
+            }
+
             #[cfg(desktop)]
             let _ = app
                 .handle()
@@ -291,7 +369,9 @@ pub fn run() {
                 app.handle().clone(),
             )));
             #[cfg(not(mobile))]
-            recreate_window(app.handle());
+            {
+                tauri::async_runtime::block_on(recreate_window(app.handle(), "main", None));
+            }
             Ok(())
         })
         .run(context)

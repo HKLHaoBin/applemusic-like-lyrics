@@ -1,7 +1,10 @@
 import {
+	type BaseRenderer,
 	LyricPlayer as CoreLyricPlayer,
+	MaskObsceneWordsMode,
 	type LyricLine,
 	type LyricLineMouseEvent,
+	type LyricPlayerBase,
 	type spring,
 } from "@applemusic-like-lyrics/core";
 import {
@@ -95,6 +98,13 @@ const lyricPlayerProps = {
 		default: false,
 	},
 	/**
+	 * 设置歌词中不雅用语的掩码模式，默认为 `MaskObsceneWordsMode.Disabled`，即不掩码
+	 */
+	maskObsceneWordsMode: {
+		type: Object as PropType<MaskObsceneWordsMode>,
+		default: MaskObsceneWordsMode.Disabled,
+	},
+	/**
 	 * 设置当前播放歌词，要注意传入后这个数组内的信息不得修改，否则会发生错误
 	 */
 	lyricLines: {
@@ -183,7 +193,7 @@ export interface LyricPlayerRef {
 	/**
 	 * 歌词播放实例
 	 */
-	lyricPlayer: Ref<CoreLyricPlayer | undefined>;
+	lyricPlayer: Ref<LyricPlayerBase | undefined>;
 	/**
 	 * 将歌词播放实例的元素包裹起来的 DIV 元素实例
 	 */
@@ -268,6 +278,13 @@ export const LyricPlayer = defineComponent({
 		watchEffect(() => {
 			if (props.hidePassedLines !== undefined)
 				playerRef.value?.setHidePassedLines(props.hidePassedLines);
+		});
+		
+		watchEffect(() => {
+			if (props.maskObsceneWordsMode !== undefined)
+				playerRef.value?.setMaskObsceneWords(props.maskObsceneWordsMode);
+			else
+				playerRef.value?.setMaskObsceneWords(MaskObsceneWordsMode.Disabled);
 		});
 
 		watchEffect(() => {

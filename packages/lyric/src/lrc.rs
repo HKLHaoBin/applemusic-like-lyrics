@@ -1,13 +1,13 @@
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-use crate::{utils::process_lyrics, LyricLine, LyricWord};
+use crate::{LyricLine, LyricWord, utils::process_lyrics};
 
 use std::fmt::Write;
 use std::{borrow::Cow, str::FromStr};
 
+use nom::{IResult, Parser, character::complete::line_ending};
 use nom::{bytes::complete::*, combinator::opt, multi::many1};
-use nom::{character::complete::line_ending, IResult};
 
 #[inline]
 pub fn parse_time(src: &str) -> IResult<&str, u64> {
@@ -21,7 +21,7 @@ pub fn parse_time(src: &str) -> IResult<&str, u64> {
             return IResult::Err(nom::Err::Error(nom::error::Error::new(
                 src,
                 nom::error::ErrorKind::Digit,
-            )))
+            )));
         }
     };
 
@@ -34,7 +34,7 @@ pub fn parse_time(src: &str) -> IResult<&str, u64> {
             return IResult::Err(nom::Err::Error(nom::error::Error::new(
                 src,
                 nom::error::ErrorKind::Digit,
-            )))
+            )));
         }
     };
 
@@ -71,10 +71,10 @@ fn time_test() {
 
 #[inline]
 pub fn parse_line(src: &str) -> IResult<&str, Vec<LyricLine<'_>>> {
-    let (src, times) = many1(parse_time)(src)?;
+    let (src, times) = many1(parse_time).parse(src)?;
     match is_not("\r\n")(src) {
         Ok((src, line)) => {
-            let (src, _) = opt(line_ending)(src)?;
+            let (src, _) = opt(line_ending).parse(src)?;
             Ok((
                 src,
                 times
@@ -84,6 +84,7 @@ pub fn parse_line(src: &str) -> IResult<&str, Vec<LyricLine<'_>>> {
                             start_time: t,
                             end_time: 0,
                             word: Cow::Borrowed(line),
+                            roman_word: std::borrow::Cow::Borrowed(""),
                         }],
                         start_time: t,
                         end_time: 0,
@@ -104,6 +105,7 @@ pub fn parse_line(src: &str) -> IResult<&str, Vec<LyricLine<'_>>> {
                         start_time: t,
                         end_time: 0,
                         word: Cow::Borrowed(input),
+                        roman_word: std::borrow::Cow::Borrowed(""),
                     }],
                     start_time: t,
                     ..Default::default()
@@ -124,7 +126,8 @@ fn lyric_line_test() {
                 words: vec![LyricWord {
                     start_time: 1120,
                     end_time: 0,
-                    word: Cow::Borrowed(" test LyRiC")
+                    word: Cow::Borrowed(" test LyRiC"),
+                    roman_word: std::borrow::Cow::Borrowed(""),
                 }],
                 start_time: 1120,
                 ..Default::default()
@@ -141,7 +144,8 @@ fn lyric_line_test() {
                     words: vec![LyricWord {
                         start_time: 10254,
                         end_time: 0,
-                        word: Cow::Borrowed(" sssxxx")
+                        word: Cow::Borrowed(" sssxxx"),
+                        roman_word: std::borrow::Cow::Borrowed(""),
                     }],
                     start_time: 10254,
                     ..Default::default()
@@ -150,7 +154,8 @@ fn lyric_line_test() {
                     words: vec![LyricWord {
                         start_time: 10254,
                         end_time: 0,
-                        word: Cow::Borrowed(" sssxxx")
+                        word: Cow::Borrowed(" sssxxx"),
+                        roman_word: std::borrow::Cow::Borrowed(""),
                     }],
                     start_time: 10254,
                     ..Default::default()
@@ -166,7 +171,8 @@ fn lyric_line_test() {
                 words: vec![LyricWord {
                     start_time: 70100,
                     end_time: 0,
-                    word: Cow::Borrowed("")
+                    word: Cow::Borrowed(""),
+                    roman_word: std::borrow::Cow::Borrowed(""),
                 }],
                 start_time: 70100,
                 ..Default::default()
@@ -181,7 +187,8 @@ fn lyric_line_test() {
                 words: vec![LyricWord {
                     start_time: 26650,
                     end_time: 0,
-                    word: Cow::Borrowed("")
+                    word: Cow::Borrowed(""),
+                    roman_word: std::borrow::Cow::Borrowed(""),
                 }],
                 start_time: 26650,
                 ..Default::default()
@@ -191,7 +198,7 @@ fn lyric_line_test() {
 }
 
 #[inline]
-pub fn parse_lrc(src: &str) -> Vec<LyricLine> {
+pub fn parse_lrc<'a>(src: &'a str) -> Vec<LyricLine<'a>> {
     let lines = src.lines();
     let mut result = Vec::with_capacity(lines.size_hint().1.unwrap_or(1024).min(1024));
     let mut last_end_time = u64::MAX as _;
@@ -267,7 +274,7 @@ pub fn stringify_lrc_js(lrc: JsValue) -> String {
 
 #[test]
 fn lrc_max_num() {
-    dbg!(parse_line("[999:99.999]Test"));
+    let _ = dbg!(parse_line("[999:99.999]Test"));
 }
 
 #[test]

@@ -1,25 +1,43 @@
+import { branch, commit } from "virtual:git-metadata-plugin";
 import {
-	PlayerControlsType,
-	VerticalCoverLayout,
+	CanvasLyricPlayer,
+	DomLyricPlayer,
+	DomSlimLyricPlayer,
+	MeshGradientRenderer,
+	PixiRenderer,
+} from "@applemusic-like-lyrics/core";
+import {
+	cssBackgroundPropertyAtom,
 	enableLyricLineBlurEffectAtom,
 	enableLyricLineScaleEffectAtom,
 	enableLyricLineSpringAnimationAtom,
 	enableLyricRomanLineAtom,
 	enableLyricSwapTransRomanLineAtom,
 	enableLyricTranslationLineAtom,
+	fftDataRangeAtom,
+	type LyricBackgroundRenderer,
+	LyricPlayerImplementation,
+	type LyricPlayerImplementationObject,
+	LyricSizePreset,
+	type LyricSizePresetValue,
 	lyricBackgroundFPSAtom,
+	lyricBackgroundRendererAtom,
 	lyricBackgroundRenderScaleAtom,
 	lyricBackgroundStaticModeAtom,
 	lyricFontFamilyAtom,
 	lyricFontWeightAtom,
 	lyricLetterSpacingAtom,
+	lyricPlayerImplementationAtom,
+	lyricSizePresetAtom,
 	lyricWordFadeWidthAtom,
+	PlayerControlsType,
 	playerControlsTypeAtom,
 	showBottomControlAtom,
 	showMusicAlbumAtom,
 	showMusicArtistsAtom,
 	showMusicNameAtom,
 	showVolumeControlAtom,
+	VerticalCoverLayout,
 	verticalCoverLayoutAtom,
 } from "@applemusic-like-lyrics/react-full";
 import {
@@ -38,10 +56,10 @@ import {
 	type TextProps,
 } from "@radix-ui/themes";
 import { getVersion } from "@tauri-apps/api/app";
-import { type WritableAtom, atom, useAtom, useAtomValue } from "jotai";
+import { invoke } from "@tauri-apps/api/core";
+import { atom, useAtom, useAtomValue, type WritableAtom } from "jotai";
 import { loadable } from "jotai/utils";
-import {
-	type ComponentProps,
+import React, {
 	type FC,
 	type PropsWithChildren,
 	type ReactNode,
@@ -52,27 +70,29 @@ import {
 } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { toast } from "react-toastify";
-import { branch, commit } from "virtual:git-metadata-plugin";
-import resources from "virtual:i18next-loader";
 import { router } from "../../router.tsx";
 import {
-	LyricPlayerImplementation,
 	advanceLyricDynamicLyricTimeAtom,
-	backgroundRendererAtom,
-	displayLanguageAtom,
-	fftDataRangeAtom,
-	lyricPlayerImplementationAtom,
+	DarkMode,
+	darkModeAtom,
+	enableMediaControlsAtom,
+	enableWsLyricsInSmtcModeAtom,
 	showStatJSFrameAtom,
-} from "../../states/index.ts";
-import { updateInfoAtom } from "../../states/updater.ts";
+	updateInfoAtom,
+} from "../../states/appAtoms.ts";
+import {
+	type SmtcSession,
+	smtcSelectedSessionIdAtom,
+	smtcSessionsAtom,
+	smtcTextConversionModeAtom,
+	smtcTimeOffsetAtom,
+	TextConversionMode,
+} from "../../states/smtcAtoms.ts";
 import { restartApp } from "../../utils/player.ts";
 import styles from "./index.module.css";
 
 const SettingEntry: FC<
-	PropsWithChildren<{
-		label: string;
-		description?: string;
-	}>
+	PropsWithChildren<{ label: string; description?: string }>
 > = ({ label, description, children }) => {
 	return (
 		<Card mt="2">
@@ -90,35 +110,31 @@ const SettingEntry: FC<
 };
 
 const NumberSettings: FC<
-	{
-		configAtom: WritableAtom<number, [number], void>;
-	} & ComponentProps<typeof SettingEntry> &
-		Omit<TextField.RootProps, "value" | "onChange">
+	{ configAtom: WritableAtom<number, [number], void> } & React.ComponentProps<
+		typeof SettingEntry
+	> &
+		Omit<React.ComponentProps<typeof TextField.Root>, "value" | "onChange">
 > = ({ label, description, configAtom, ...props }) => {
 	const [value, setValue] = useAtom(configAtom);
-
 	return (
 		<SettingEntry label={label} description={description}>
 			<TextField.Root
 				{...props}
-				style={{
-					minWidth: "10em",
-				}}
-				defaultValue={value}
-				onChange={(e) => setValue(e.currentTarget.valueAsNumber)}
+				style={{ minWidth: "10em" }}
+				defaultValue={String(value)}
+				onChange={(e) => setValue(e.currentTarget.valueAsNumber || 0)}
 			/>
 		</SettingEntry>
 	);
 };
 
 const SwitchSettings: FC<
-	{
-		configAtom: WritableAtom<boolean, [boolean], void>;
-	} & ComponentProps<typeof SettingEntry> &
+	{ configAtom: WritableAtom<boolean, [boolean], void> } & React.ComponentProps<
+		typeof SettingEntry
+	> &
 		Omit<SwitchProps, "value" | "onChange">
 > = ({ label, description, configAtom }) => {
 	const [value, setValue] = useAtom(configAtom);
-
 	return (
 		<SettingEntry label={label} description={description}>
 			<Switch checked={value} onCheckedChange={setValue} />
@@ -126,66 +142,9 @@ const SwitchSettings: FC<
 	);
 };
 
-function SelectSettings<T extends string>({
-	label,
-	description,
-	menu,
-	configAtom,
-}: {
-	configAtom: WritableAtom<T, [T], void>;
-	menu: {
-		label: string;
-		value: T;
-	}[];
-} & ComponentProps<typeof SettingEntry>): ReactNode {
-	const [value, setValue] = useAtom(configAtom);
-
-	return (
-		<SettingEntry label={label} description={description}>
-			<Select.Root value={value} onValueChange={setValue}>
-				<Select.Trigger />
-				<Select.Content>
-					{menu.map((item) => (
-						<Select.Item key={item.value} value={item.value}>
-							{item.label}
-						</Select.Item>
-					))}
-				</Select.Content>
-			</Select.Root>
-		</SettingEntry>
-	);
-}
-
-function SliderSettings<T extends number | number[]>({
-	label,
-	description,
-	configAtom,
-	children,
-	...rest
-}: PropsWithChildren<{
-	configAtom: WritableAtom<T, [T], void>;
-}> &
-	ComponentProps<typeof SettingEntry> &
-	Omit<SliderProps, "value" | "onValueChange">): ReactNode {
-	const [value, setValue] = useAtom(configAtom);
-
-	return (
-		<SettingEntry label={label} description={description}>
-			<Slider
-				value={typeof value === "number" ? [value] : value}
-				onValueChange={(v: any) =>
-					typeof value === "number" ? setValue(v[0]) : setValue(v)
-				}
-				{...rest}
-			/>
-			{children}
-		</SettingEntry>
-	);
-}
-
 const SubTitle: FC<PropsWithChildren<TextProps>> = ({ children, ...props }) => {
 	return (
-		<Text weight="bold" size="4" my="4" as="div" {...props}>
+		<Text weight="bold" size="7" my="4" as="div" {...props}>
 			{children}
 		</Text>
 	);
@@ -251,7 +210,7 @@ const LyricFontSetting: FC = () => {
 					</Text>
 					<Text as="div" color="gray" size="2" className={styles.desc}>
 						<Trans i18nKey="page.settings.lyricFont.fontWeight.description">
-							等同于 CSS 的 font-weight 属性，设置 0 为默认
+							等同于 CSS 的 font-weight 属性，设置 0 为系统控制，推荐值 600
 						</Trans>
 					</Text>
 				</Flex>
@@ -263,12 +222,10 @@ const LyricFontSetting: FC = () => {
 					onChange={(e) => setFontWeight(e.currentTarget.valueAsNumber)}
 				/>
 				<Slider
-					value={[fontWeight]}
+					value={[Number(fontWeight)]}
 					min={0}
 					max={1000}
-					style={{
-						maxWidth: "10em",
-					}}
+					style={{ maxWidth: "10em" }}
 					onValueChange={([value]) => setFontWeight(value)}
 				/>
 			</Flex>
@@ -313,12 +270,7 @@ const LyricFontSetting: FC = () => {
 				}}
 			>
 				{preview}
-				<Box
-					style={{
-						fontSize: "max(0.5em, 10px)",
-						opacity: "0.3",
-					}}
-				>
+				<Box style={{ fontSize: "max(0.5em, 10px)", opacity: "0.3" }}>
 					{preview}
 				</Box>
 			</Box>
@@ -328,38 +280,63 @@ const LyricFontSetting: FC = () => {
 
 const appVersionAtom = loadable(atom(() => getVersion()));
 
-export const PlayerSettingsTab: FC = () => {
-	const fftDataRange = useAtomValue(fftDataRangeAtom);
-	const updateInfo = useAtomValue(updateInfoAtom);
-	const appVersion = useAtomValue(appVersionAtom);
-	const [updating] = useState(false);
+function SliderSettings<T extends number | number[]>({
+	label,
+	description,
+	configAtom,
+	children,
+	...rest
+}: PropsWithChildren<{ configAtom: WritableAtom<T, [T], void> }> &
+	React.ComponentProps<typeof SettingEntry> &
+	Omit<SliderProps, "value" | "onValueChange">): ReactNode {
+	const [value, setValue] = useAtom(configAtom);
+	return (
+		<SettingEntry label={label} description={description}>
+			<Slider
+				value={typeof value === "number" ? [value] : value}
+				onValueChange={(v: number[]) =>
+					typeof value === "number" ? setValue(v[0] as T) : setValue(v as T)
+				}
+				{...rest}
+			/>
+			{children}
+		</SettingEntry>
+	);
+}
+
+const GeneralSettings = () => {
 	const { t, i18n } = useTranslation();
+	const [mode, setMode] = useAtom(darkModeAtom);
 
 	const supportedLanguagesMenu = useMemo(() => {
 		function collectLocaleKey(
-			root: any,
+			root: Record<string, unknown>,
 			result = new Set<string>(),
 			currentKey = "",
 		): Set<string> {
 			for (const key in root) {
-				if (typeof root[key] === "object") {
+				const value = root[key];
+				if (typeof value === "object" && value !== null) {
 					collectLocaleKey(
-						root[key],
+						value as Record<string, unknown>,
 						result,
 						currentKey ? `${currentKey}.${key}` : key,
 					);
-				} else if (typeof root[key] === "string" && root[key]) {
+				} else if (typeof value === "string" && value) {
 					result.add(currentKey ? `${currentKey}.${key}` : key);
 				}
 			}
 			return result;
 		}
-		const originalLocaleKeyNum = collectLocaleKey(resources["zh-CN"]).size;
-		const menu = Object.keys(resources)
+
+		const originalLocaleKeyNum = collectLocaleKey(
+			i18n.options.resources?.["zh-CN"] ?? {},
+		).size;
+		const menu = Object.keys(i18n.options.resources ?? {})
 			.map((langId) => {
 				return {
 					langId,
-					keyNum: collectLocaleKey(resources[langId]).size,
+					keyNum: collectLocaleKey(i18n.options.resources?.[langId] ?? {}).size,
 				};
 			})
 			.filter(({ keyNum }) => keyNum)
@@ -373,9 +350,9 @@ export const PlayerSettingsTab: FC = () => {
 						type: "language",
 					}).of(langId) || langId;
 				return {
-					label: `${
-						origName === name ? origName : `${origName} (${name})`
-					} (${((keyNum / originalLocaleKeyNum) * 100).toFixed(1)}%)`,
+					label: `${origName === name ? origName : `${origName} (${name})`} (${(
+						(keyNum / originalLocaleKeyNum) * 100
+					).toFixed(1)}%)`,
 					value: langId,
 				};
 			});
@@ -384,97 +361,21 @@ export const PlayerSettingsTab: FC = () => {
 			value: "cimode",
 		});
 		return menu;
-	}, [t, i18n.language]);
+	}, [t, i18n.language, i18n.options.resources]);
 
-	const playerControlsTypeMenu = useMemo(
+	const themeMenu = useMemo(
 		() => [
 			{
-				label: t(
-					"page.settings.musicInfoAppearance.playerControlsType.menu.controls",
-					"播放控制组件",
-				),
-				value: PlayerControlsType.Controls,
+				label: t("page.settings.general.theme.auto", "自动"),
+				value: DarkMode.Auto,
 			},
 			{
-				label: t(
-					"page.settings.musicInfoAppearance.playerControlsType.menu.fft",
-					"线条音频可视化",
-				),
-				value: PlayerControlsType.FFT,
+				label: t("page.settings.general.theme.light", "浅色"),
+				value: DarkMode.Light,
 			},
 			{
-				label: t(
-					"page.settings.musicInfoAppearance.playerControlsType.menu.none",
-					"无",
-				),
-				value: PlayerControlsType.None,
-			},
-		],
-		[t],
-	);
-
-	const verticalCoverLayoutMenu = useMemo(
-		() => [
-			{
-				label: t(
-					"page.settings.musicInfoAppearance.verticalCoverLayout.menu.auto",
-					"自动",
-				),
-				value: VerticalCoverLayout.Auto,
-			},
-			{
-				label: t(
-					"page.settings.musicInfoAppearance.verticalCoverLayout.menu.forceNormal",
-					"强制默认布局",
-				),
-				value: VerticalCoverLayout.ForceNormal,
-			},
-			{
-				label: t(
-					"page.settings.musicInfoAppearance.verticalCoverLayout.menu.forceImmersive",
-					"强制沉浸布局",
-				),
-				value: VerticalCoverLayout.ForceImmersive,
-			},
-		],
-		[t],
-	);
-
-	const lyricPlayerImplementationMenu = useMemo(
-		() => [
-			{
-				label: t(
-					"page.settings.lyricAppearance.lyricPlayerImplementation.menu.dom",
-					"DOM",
-				),
-				value: LyricPlayerImplementation.Dom,
-			},
-			{
-				label: t(
-					"page.settings.lyricAppearance.lyricPlayerImplementation.menu.canvas",
-					"Canvas",
-				),
-				value: LyricPlayerImplementation.Canvas,
-			},
-		],
-		[t],
-	);
-
-	const backgroundRendererMenu = useMemo(
-		() => [
-			{
-				label: t(
-					"page.settings.lyricBackground.menu.meshGradientRenderer",
-					"网格渐变渲染器",
-				),
-				value: "mesh",
-			},
-			{
-				label: t(
-					"page.settings.lyricBackground.menu.pixiRenderer",
-					"PixiJS 渲染器",
-				),
-				value: "pixi",
+				label: t("page.settings.general.theme.dark", "深色"),
+				value: DarkMode.Dark,
 			},
 		],
 		[t],
@@ -485,11 +386,46 @@ export const PlayerSettingsTab: FC = () => {
 			<SubTitle>
 				<Trans i18nKey="page.settings.general.subtitle">常规</Trans>
 			</SubTitle>
-			<SelectSettings
+			<SettingEntry
 				label={t("page.settings.general.displayLanguage.label", "显示语言")}
-				menu={supportedLanguagesMenu}
-				configAtom={displayLanguageAtom}
-			/>
+			>
+				<Select.Root value={i18n.language} onValueChange={i18n.changeLanguage}>
+					<Select.Trigger />
+					<Select.Content>
+						{supportedLanguagesMenu.map((item) => (
+							<Select.Item key={item.value} value={item.value}>
+								{item.label}
+							</Select.Item>
+						))}
+					</Select.Content>
+				</Select.Root>
+			</SettingEntry>
+			<SettingEntry
+				label={t("page.settings.general.theme.label", "界面主题")}
+				description={t(
+					"page.settings.general.theme.description",
+					"选择应用的外观主题",
+				)}
+			>
+				<Select.Root value={mode} onValueChange={(v) => setMode(v as DarkMode)}>
+					<Select.Trigger />
+					<Select.Content>
+						{themeMenu.map((item) => (
+							<Select.Item key={item.value} value={item.value}>
+								{item.label}
+							</Select.Item>
+						))}
+					</Select.Content>
+				</Select.Root>
+			</SettingEntry>
+		</>
+	);
+};
+
+const LyricContentSettings = () => {
+	const { t } = useTranslation();
+	return (
+		<>
 			<SubTitle>
 				<Trans i18nKey="page.settings.lyricContent.subtitle">歌词内容</Trans>
 			</SubTitle>
@@ -518,12 +454,137 @@ export const PlayerSettingsTab: FC = () => {
 				)}
 				configAtom={enableLyricSwapTransRomanLineAtom}
 			/>
+		</>
+	);
+};
 
+const LyricAppearanceSettings = () => {
+	const { t } = useTranslation();
+	const [lyricPlayerImplValue, setLyricPlayerImplValue] = useAtom(
+		lyricPlayerImplementationAtom,
+	);
+	const lyricPlayerImplementationMenu = useMemo(
+		() => [
+			{
+				label: t(
+					"page.settings.lyricAppearance.lyricPlayerImplementation.menu.dom",
+					"DOM",
+				),
+				value: LyricPlayerImplementation.Dom,
+			},
+			{
+				label: t(
+					"page.settings.lyricAppearance.lyricPlayerImplementation.menu.dom-slim",
+					"DOM（阉割版）",
+				),
+				value: LyricPlayerImplementation.DomSlim,
+			},
+			{
+				label: t(
+					"page.settings.lyricAppearance.lyricPlayerImplementation.menu.canvas",
+					"Canvas",
+				),
+				value: LyricPlayerImplementation.Canvas,
+			},
+		],
+		[t],
+	);
+
+	const getLyricPlayerString = (
+		value: LyricPlayerImplementationObject,
+	): string => {
+		if (!value || !value.lyricPlayer) return LyricPlayerImplementation.Dom;
+		if (value.lyricPlayer === DomLyricPlayer)
+			return LyricPlayerImplementation.Dom;
+		if (value.lyricPlayer === DomSlimLyricPlayer)
+			return LyricPlayerImplementation.DomSlim;
+		if (value.lyricPlayer === CanvasLyricPlayer)
+			return LyricPlayerImplementation.Canvas;
+		return LyricPlayerImplementation.Dom;
+	};
+
+	const handleLyricPlayerChange = (selectedString: string) => {
+		let implementationObject: LyricPlayerImplementationObject;
+		switch (selectedString) {
+			case LyricPlayerImplementation.DomSlim:
+				implementationObject = { lyricPlayer: DomSlimLyricPlayer };
+				break;
+			case LyricPlayerImplementation.Canvas:
+				implementationObject = { lyricPlayer: CanvasLyricPlayer };
+				break;
+			default:
+				implementationObject = { lyricPlayer: DomLyricPlayer };
+				break;
+		}
+		setLyricPlayerImplValue(implementationObject);
+		localStorage.setItem(
+			"amll-react-full.lyricPlayerImplementation",
+			selectedString,
+		);
+	};
+	const [lyricSize, setLyricSize] = useAtom(lyricSizePresetAtom);
+
+	const lyricSizeMenu = useMemo(
+		() => [
+			{
+				label: t(
+					"page.settings.lyricAppearance.lyricFontSize.menu.tiny",
+					"超小",
+				),
+				value: LyricSizePreset.Tiny,
+			},
+			{
+				label: t(
+					"page.settings.lyricAppearance.lyricFontSize.menu.extra_small",
+					"极小",
+				),
+				value: LyricSizePreset.ExtraSmall,
+			},
+			{
+				label: t(
+					"page.settings.lyricAppearance.lyricFontSize.menu.small",
+					"小",
+				),
+				value: LyricSizePreset.Small,
+			},
+			{
+				label: t(
+					"page.settings.lyricAppearance.lyricFontSize.menu.medium",
+					"中",
+				),
+				value: LyricSizePreset.Medium,
+			},
+			{
+				label: t(
+					"page.settings.lyricAppearance.lyricFontSize.menu.large",
+					"大",
+				),
+				value: LyricSizePreset.Large,
+			},
+			{
+				label: t(
+					"page.settings.lyricAppearance.lyricFontSize.menu.extra_large",
+					"极大",
+				),
+				value: LyricSizePreset.ExtraLarge,
+			},
+			{
+				label: t(
+					"page.settings.lyricAppearance.lyricFontSize.menu.huge",
+					"超大",
+				),
+				value: LyricSizePreset.Huge,
+			},
+		],
+		[t],
+	);
+
+	return (
+		<>
 			<SubTitle>
 				<Trans i18nKey="page.settings.lyricAppearance.subtitle">歌词样式</Trans>
 			</SubTitle>
-
-			<SelectSettings
+			<SettingEntry
 				label={t(
 					"page.settings.lyricAppearance.lyricPlayerImplementation.label",
 					"歌词播放器实现",
@@ -532,12 +593,46 @@ export const PlayerSettingsTab: FC = () => {
 					"page.settings.lyricAppearance.lyricPlayerImplementation.description",
 					"目前有两个歌词播放实现\n- DOM：使用 DOM 元素实现，目前效果最全，但性能开销大\n- Canvas：使用 Canvas 实现，仍在开发中，性能优异，但是部分细节效果不足",
 				)}
-				menu={lyricPlayerImplementationMenu}
-				configAtom={lyricPlayerImplementationAtom}
-			/>
-
+			>
+				<Select.Root
+					value={getLyricPlayerString(lyricPlayerImplValue)}
+					onValueChange={handleLyricPlayerChange}
+				>
+					<Select.Trigger />
+					<Select.Content>
+						{lyricPlayerImplementationMenu.map((item) => (
+							<Select.Item key={item.value} value={item.value}>
+								{item.label}
+							</Select.Item>
+						))}
+					</Select.Content>
+				</Select.Root>
+			</SettingEntry>
 			<LyricFontSetting />
-
+			<SettingEntry
+				label={t(
+					"page.settings.lyricAppearance.lyricFontSize.label",
+					"歌词字体大小",
+				)}
+				description={t(
+					"page.settings.lyricAppearance.lyricFontSize.descriptionResponsive",
+					"设置歌词的字体大小",
+				)}
+			>
+				<Select.Root
+					value={lyricSize}
+					onValueChange={(value) => setLyricSize(value as LyricSizePresetValue)}
+				>
+					<Select.Trigger />
+					<Select.Content>
+						{lyricSizeMenu.map((item) => (
+							<Select.Item key={item.value} value={item.value}>
+								{item.label}
+							</Select.Item>
+						))}
+					</Select.Content>
+				</Select.Root>
+			</SettingEntry>
 			<SwitchSettings
 				label={t(
 					"page.settings.lyricAppearance.enableLyricLineBlurEffect.label",
@@ -582,7 +677,6 @@ export const PlayerSettingsTab: FC = () => {
 				)}
 				configAtom={advanceLyricDynamicLyricTimeAtom}
 			/>
-
 			<NumberSettings
 				placeholder="0.5"
 				type="number"
@@ -599,13 +693,80 @@ export const PlayerSettingsTab: FC = () => {
 				)}
 				configAtom={lyricWordFadeWidthAtom}
 			/>
+		</>
+	);
+};
 
+const MusicInfoAppearanceSettings = () => {
+	const { t } = useTranslation();
+	const fftDataRange = useAtomValue(fftDataRangeAtom);
+	const [playerControlsType, setPlayerControlsType] = useAtom(
+		playerControlsTypeAtom,
+	);
+	const [verticalCoverLayout, setVerticalCoverLayout] = useAtom(
+		verticalCoverLayoutAtom,
+	);
+
+	const playerControlsTypeMenu = useMemo(
+		() => [
+			{
+				label: t(
+					"page.settings.musicInfoAppearance.playerControlsType.menu.controls",
+					"播放控制组件",
+				),
+				value: PlayerControlsType.Controls,
+			},
+			{
+				label: t(
+					"page.settings.musicInfoAppearance.playerControlsType.menu.fft",
+					"线条音频可视化",
+				),
+				value: PlayerControlsType.FFT,
+			},
+			{
+				label: t(
+					"page.settings.musicInfoAppearance.playerControlsType.menu.none",
+					"无",
+				),
+				value: PlayerControlsType.None,
+			},
+		],
+		[t],
+	);
+	const verticalCoverLayoutMenu = useMemo(
+		() => [
+			{
+				label: t(
+					"page.settings.musicInfoAppearance.verticalCoverLayout.menu.auto",
+					"自动",
+				),
+				value: VerticalCoverLayout.Auto,
+			},
+			{
+				label: t(
+					"page.settings.musicInfoAppearance.verticalCoverLayout.menu.forceNormal",
+					"强制默认布局",
+				),
+				value: VerticalCoverLayout.ForceNormal,
+			},
+			{
+				label: t(
+					"page.settings.musicInfoAppearance.verticalCoverLayout.menu.forceImmersive",
+					"强制沉浸布局",
+				),
+				value: VerticalCoverLayout.ForceImmersive,
+			},
+		],
+		[t],
+	);
+
+	return (
+		<>
 			<SubTitle>
 				<Trans i18nKey="page.settings.musicInfoAppearance.subtitle">
 					歌曲信息样式
 				</Trans>
 			</SubTitle>
-
 			<SwitchSettings
 				label={t(
 					"page.settings.musicInfoAppearance.showMusicName.label",
@@ -631,9 +792,7 @@ export const PlayerSettingsTab: FC = () => {
 				)}
 				configAtom={showMusicAlbumAtom}
 			/>
-
 			<Box height="1em" />
-
 			<SwitchSettings
 				label={t(
 					"page.settings.musicInfoAppearance.showVolumeControl.label",
@@ -652,10 +811,8 @@ export const PlayerSettingsTab: FC = () => {
 				)}
 				configAtom={showBottomControlAtom}
 			/>
-
 			<Box height="1em" />
-
-			<SelectSettings
+			<SettingEntry
 				label={t(
 					"page.settings.musicInfoAppearance.playerControlsType.label",
 					"播放控制组件类型",
@@ -664,13 +821,23 @@ export const PlayerSettingsTab: FC = () => {
 					"page.settings.musicInfoAppearance.playerControlsType.description",
 					"即歌曲信息下方的组件",
 				)}
-				menu={playerControlsTypeMenu}
-				configAtom={playerControlsTypeAtom}
-			/>
-
+			>
+				<Select.Root
+					value={playerControlsType}
+					onValueChange={(v) => setPlayerControlsType(v as PlayerControlsType)}
+				>
+					<Select.Trigger />
+					<Select.Content>
+						{playerControlsTypeMenu.map((item) => (
+							<Select.Item key={item.value} value={item.value}>
+								{item.label}
+							</Select.Item>
+						))}
+					</Select.Content>
+				</Select.Root>
+			</SettingEntry>
 			<Box height="1em" />
-
-			<SelectSettings
+			<SettingEntry
 				label={t(
 					"page.settings.musicInfoAppearance.verticalCoverLayout.label",
 					"垂直布局专辑图布局模式",
@@ -679,10 +846,23 @@ export const PlayerSettingsTab: FC = () => {
 					"page.settings.musicInfoAppearance.verticalCoverLayout.description",
 					"在隐藏歌词的情况下专辑图的布局方式：\n- 自动：根据专辑图是否为视频以使用沉浸布局\n- 强制默认布局：强制使用默认的专辑图布局\n- 强制沉浸布局：强制使用沉浸式的专辑图布局",
 				)}
-				menu={verticalCoverLayoutMenu}
-				configAtom={verticalCoverLayoutAtom}
-			/>
-
+			>
+				<Select.Root
+					value={verticalCoverLayout}
+					onValueChange={(v) =>
+						setVerticalCoverLayout(v as VerticalCoverLayout)
+					}
+				>
+					<Select.Trigger />
+					<Select.Content>
+						{verticalCoverLayoutMenu.map((item) => (
+							<Select.Item key={item.value} value={item.value}>
+								{item.label}
+							</Select.Item>
+						))}
+					</Select.Content>
+				</Select.Root>
+			</SettingEntry>
 			<SliderSettings
 				label={t(
 					"page.settings.musicInfoAppearance.fftDataRange.label",
@@ -700,64 +880,172 @@ export const PlayerSettingsTab: FC = () => {
 					{fftDataRange[0]} Hz - {fftDataRange[1]} Hz
 				</Text>
 			</SliderSettings>
+		</>
+	);
+};
 
+const LyricBackgroundSettings = () => {
+	const { t } = useTranslation();
+	const [backgroundRendererValue, setBackgroundRendererValue] = useAtom(
+		lyricBackgroundRendererAtom,
+	);
+	const [cssBackgroundProperty, setCssBackgroundProperty] = useAtom(
+		cssBackgroundPropertyAtom,
+	);
+	const backgroundRendererMenu = useMemo(
+		() => [
+			{
+				label: t(
+					"page.settings.lyricBackground.menu.meshGradientRenderer",
+					"网格渐变渲染器",
+				),
+				value: "mesh",
+			},
+			{
+				label: t(
+					"page.settings.lyricBackground.menu.pixiRenderer",
+					"PixiJS 渲染器",
+				),
+				value: "pixi",
+			},
+			{
+				label: t(
+					"page.settings.lyricBackground.menu.cssBackground",
+					"CSS 背景",
+				),
+				value: "css-bg",
+			},
+		],
+		[t],
+	);
+
+	const getBackgroundRendererString = (
+		value: LyricBackgroundRenderer,
+	): string => {
+		if (typeof value.renderer === "string" && value.renderer === "css-bg")
+			return "css-bg";
+		if (value.renderer === MeshGradientRenderer) return "mesh";
+		if (value.renderer === PixiRenderer) return "pixi";
+		return "mesh";
+	};
+
+	const handleBackgroundRendererChange = (selectedString: string) => {
+		let rendererObject: LyricBackgroundRenderer;
+		switch (selectedString) {
+			case "mesh":
+				rendererObject = { renderer: MeshGradientRenderer };
+				break;
+			case "pixi":
+				rendererObject = { renderer: PixiRenderer };
+				break;
+			default:
+				rendererObject = { renderer: "css-bg" };
+				break;
+		}
+		setBackgroundRendererValue(rendererObject);
+		localStorage.setItem(
+			"amll-react-full.lyricBackgroundRenderer",
+			selectedString,
+		);
+	};
+
+	return (
+		<>
 			<SubTitle>
 				<Trans i18nKey="page.settings.lyricBackground.subtitle">歌词背景</Trans>
 			</SubTitle>
-
-			<SelectSettings
+			<SettingEntry
 				label={t(
 					"page.settings.lyricBackground.backgroundRenderer.label",
 					"背景渲染器",
 				)}
-				menu={backgroundRendererMenu}
-				configAtom={backgroundRendererAtom}
-			/>
+			>
+				<Select.Root
+					value={getBackgroundRendererString(backgroundRendererValue)}
+					onValueChange={handleBackgroundRendererChange}
+				>
+					<Select.Trigger />
+					<Select.Content>
+						{backgroundRendererMenu.map((item) => (
+							<Select.Item key={item.value} value={item.value}>
+								{item.label}
+							</Select.Item>
+						))}
+					</Select.Content>
+				</Select.Root>
+			</SettingEntry>
 
-			<NumberSettings
-				placeholder="60"
-				type="number"
-				min="1"
-				max="1000"
-				step="1"
-				label={t(
-					"page.settings.lyricBackground.lyricBackgroundFPS.label",
-					"背景最高帧数",
-				)}
-				description={t(
-					"page.settings.lyricBackground.lyricBackgroundFPS.description",
-					"对性能影响较高，但是实际开销不大，如果遇到性能问题，可以尝试降低此值。默认值为 60。",
-				)}
-				configAtom={lyricBackgroundFPSAtom}
-			/>
-			<NumberSettings
-				placeholder="1.0"
-				type="number"
-				min="0.01"
-				max="10.0"
-				step="0.01"
-				label={t(
-					"page.settings.lyricBackground.lyricBackgroundRenderScale.label",
-					"背景渲染倍率",
-				)}
-				description={t(
-					"page.settings.lyricBackground.lyricBackgroundRenderScale.description",
-					"对性能影响较高，但是实际开销不大，如果遇到性能问题，可以尝试降低此值。默认值为 1 即每像素点渲染。",
-				)}
-				configAtom={lyricBackgroundRenderScaleAtom}
-			/>
-			<SwitchSettings
-				label={t(
-					"page.settings.lyricBackground.lyricBackgroundStaticMode.label",
-					"背景静态模式",
-				)}
-				description={t(
-					"page.settings.lyricBackground.lyricBackgroundStaticMode.description",
-					"让背景会在除了切换歌曲变换封面的情况下保持静止，如果遇到了性能问题，可以考虑开启此项。\n注意：启用此项会导致背景跳动效果失效。",
-				)}
-				configAtom={lyricBackgroundStaticModeAtom}
-			/>
+			{getBackgroundRendererString(backgroundRendererValue) === "css-bg" ? (
+				<SettingEntry
+					label={t(
+						"page.settings.lyricBackground.lyricBackgroundColor.label",
+						"CSS 背景属性值",
+					)}
+					description={t(
+						"page.settings.lyricBackground.lyricBackgroundColor.description",
+						"等同于放入 background 样式的字符串值，默认为 #111111",
+					)}
+				>
+					<TextField.Root
+						value={cssBackgroundProperty}
+						onChange={(e) => setCssBackgroundProperty(e.currentTarget.value)}
+					/>
+				</SettingEntry>
+			) : (
+				<>
+					<NumberSettings
+						placeholder="60"
+						type="number"
+						min="1"
+						max="1000"
+						step="1"
+						label={t(
+							"page.settings.lyricBackground.lyricBackgroundFPS.label",
+							"背景最高帧数",
+						)}
+						description={t(
+							"page.settings.lyricBackground.lyricBackgroundFPS.description",
+							"对性能影响较高，但是实际开销不大，如果遇到性能问题，可以尝试降低此值。默认值为 60。",
+						)}
+						configAtom={lyricBackgroundFPSAtom}
+					/>
+					<NumberSettings
+						placeholder="1.0"
+						type="number"
+						min="0.01"
+						max="10.0"
+						step="0.01"
+						label={t(
+							"page.settings.lyricBackground.lyricBackgroundRenderScale.label",
+							"背景渲染倍率",
+						)}
+						description={t(
+							"page.settings.lyricBackground.lyricBackgroundRenderScale.description",
+							"对性能影响较高，但是实际开销不大，如果遇到性能问题，可以尝试降低此值。默认值为 1 即每像素点渲染。",
+						)}
+						configAtom={lyricBackgroundRenderScaleAtom}
+					/>
+					<SwitchSettings
+						label={t(
+							"page.settings.lyricBackground.lyricBackgroundStaticMode.label",
+							"背景静态模式",
+						)}
+						description={t(
+							"page.settings.lyricBackground.lyricBackgroundStaticMode.description",
+							"让背景会在除了切换歌曲变换封面的情况下保持静止，如果遇到了性能问题，可以考虑开启此项。\n注意：启用此项会导致背景跳动效果失效。",
+						)}
+						configAtom={lyricBackgroundStaticModeAtom}
+					/>
+				</>
+			)}
+		</>
+	);
+};
 
+const OthersSettings = () => {
+	const { t } = useTranslation();
+	return (
+		<>
 			<SubTitle>
 				<Trans i18nKey="page.settings.others.subtitle">杂项</Trans>
 			</SubTitle>
@@ -771,6 +1059,17 @@ export const PlayerSettingsTab: FC = () => {
 					"可以看到帧率、帧时间、内存占用（仅 Chromuim 系）等信息，对性能影响较小。",
 				)}
 				configAtom={showStatJSFrameAtom}
+			/>
+			<SwitchSettings
+				label={t(
+					"page.settings.smtc.enableMediaControls.label",
+					"启用内置播放器的媒体控件",
+				)}
+				description={t(
+					"page.settings.smtc.enableMediaControls.description",
+					"目前只支持 Windows 的 SMTC",
+				)}
+				configAtom={enableMediaControlsAtom}
 			/>
 			<Button my="2" onClick={() => restartApp()}>
 				<Trans i18nKey="page.settings.others.restartProgram">重启程序</Trans>
@@ -786,14 +1085,26 @@ export const PlayerSettingsTab: FC = () => {
 					歌词页面开发用工具
 				</Trans>
 			</Button>
-			<Separator my="3" size="4" />
+		</>
+	);
+};
+
+const AboutSettings = () => {
+	const { t } = useTranslation();
+	const updateInfo = useAtomValue(updateInfoAtom);
+	const appVersion = useAtomValue(appVersionAtom);
+	const [updating, setUpdating] = useState(false);
+
+	return (
+		<>
 			<SubTitle>
 				<Trans i18nKey="page.about.subtitle">关于</Trans>
 			</SubTitle>
 			<Text as="div">Apple Music-like Lyrics Player</Text>
 			<Text as="div" style={{ opacity: "0.5" }}>
-				{appVersion.state === "hasData" ? `${appVersion.data} - ` : ""}
-				{commit.substring(0, 7)} - {branch}
+				{" "}
+				{appVersion.state === "hasData" ? `${appVersion.data} - ` : ""}{" "}
+				{commit.substring(0, 7)} - {branch}{" "}
 			</Text>
 			<Text as="div">
 				<Trans i18nKey="page.about.credits">
@@ -801,8 +1112,7 @@ export const PlayerSettingsTab: FC = () => {
 				</Trans>
 			</Text>
 			<Suspense>
-				{/* biome-ignore lint/complexity/useOptionalChain: <explanation> */}
-				{updateInfo && updateInfo.available && (
+				{updateInfo && (
 					<>
 						<Separator size="4" my="3" />
 						<div id="updater">
@@ -827,29 +1137,31 @@ export const PlayerSettingsTab: FC = () => {
 							disabled={updating}
 							loading={updating}
 							onClick={() => {
+								setUpdating(true);
 								const toastId = toast.loading(
 									t(
 										"page.about.updating",
 										"正在更新，完成后将会自动重启，请稍后……",
 									),
 								);
-								let contentLength: number | undefined = undefined;
+								let contentLength: number | undefined;
 								let receivedLength = 0;
-
 								function getProgressSizeText() {
 									const rec = `${(receivedLength / 1024 / 1024).toFixed(2)} MiB`;
 									if (contentLength === undefined) {
 										return `(${rec})`;
 									}
-									const total = `${(contentLength / 1024 / 1024).toFixed(2)} MiB`;
-									return `(${rec} / ${total}) (${((receivedLength / contentLength) * 100).toFixed(1)}%)`;
+									const total = `${(contentLength / 1024 / 1024).toFixed(
+										2,
+									)} MiB`;
+									return `(${rec} / ${total}) (${(
+										(receivedLength / contentLength) * 100
+									).toFixed(1)}%)`;
 								}
-
 								const getDownloadMessage = (progressText: string) =>
 									t("page.about.downloading", "正在下载更新…… {progressText}", {
 										progressText,
 									});
-
 								updateInfo.downloadAndInstall((evt) => {
 									switch (evt.event) {
 										case "Started": {
@@ -892,4 +1204,216 @@ export const PlayerSettingsTab: FC = () => {
 			</Suspense>
 		</>
 	);
+};
+
+const SmtcSettings = () => {
+	const { t } = useTranslation();
+	const sessions = useAtomValue(smtcSessionsAtom);
+	const [selectedSession, setSelectedSession] = useAtom(
+		smtcSelectedSessionIdAtom,
+	);
+	const [textConversion, setTextConversion] = useAtom(
+		smtcTextConversionModeAtom,
+	);
+
+	const handleForceUpdateClick = () => {
+		invoke("request_smtc_update").catch((err) => {
+			console.error("手动调用 request_smtc_update 失败:", err);
+		});
+	};
+
+	const sessionMenu = useMemo(
+		() => [
+			{ label: t("page.settings.smtc.session.auto"), value: "null" },
+			...(sessions || []).map((s: SmtcSession) => ({
+				label: s.displayName,
+				value: s.sessionId,
+			})),
+		],
+		[t, sessions],
+	);
+
+	const textConversionMenu = useMemo(
+		() => [
+			{
+				label: t("page.settings.smtc.textConversion.off"),
+				value: TextConversionMode.Off,
+			},
+			{
+				label: t("page.settings.smtc.textConversion.t2s"),
+				value: TextConversionMode.TraditionalToSimplified,
+			},
+			{
+				label: t("page.settings.smtc.textConversion.s2t"),
+				value: TextConversionMode.SimplifiedToTraditional,
+			},
+			{
+				label: t("page.settings.smtc.textConversion.s2tw"),
+				value: TextConversionMode.SimplifiedToTaiwan,
+			},
+			{
+				label: t("page.settings.smtc.textConversion.tw2s"),
+				value: TextConversionMode.TaiwanToSimplified,
+			},
+			{
+				label: t("page.settings.smtc.textConversion.s2hk"),
+				value: TextConversionMode.SimplifiedToHongKong,
+			},
+			{
+				label: t("page.settings.smtc.textConversion.hk2s"),
+				value: TextConversionMode.HongKongToSimplified,
+			},
+		],
+		[t],
+	);
+
+	const handleSessionChange = (value: string) => {
+		const finalValue = value === "null" ? null : value;
+		setSelectedSession(finalValue);
+
+		if (finalValue) {
+			localStorage.setItem("saved_smtc_session_id", finalValue);
+		} else {
+			localStorage.removeItem("saved_smtc_session_id");
+		}
+
+		invoke("control_external_media", {
+			payload: { type: "selectSession", session_id: finalValue ?? "" },
+		}).catch((err) => {
+			console.error(err);
+			toast.error(t("page.settings.smtc.session.changeFailed", { error: err }));
+		});
+	};
+
+	const handleTextConversionChange = (value: TextConversionMode) => {
+		setTextConversion(value);
+
+		if (value && value !== TextConversionMode.Off) {
+			localStorage.setItem("saved_smtc_text_conversion_mode", value);
+		} else {
+			localStorage.removeItem("saved_smtc_text_conversion_mode");
+		}
+
+		invoke("control_external_media", {
+			payload: { type: "setTextConversion", mode: value },
+		}).catch((err) => {
+			console.error(err);
+			toast.error(
+				t("page.settings.smtc.textConversion.changeFailed", { error: err }),
+			);
+		});
+	};
+
+	return (
+		<>
+			<SubTitle>
+				<Trans i18nKey="page.settings.smtc.subtitle">SMTC 监听设置</Trans>
+			</SubTitle>
+
+			<NumberSettings
+				label={t("page.settings.smtc.timeOffset.label", "时间轴偏移量 (ms)")}
+				description={t(
+					"page.settings.smtc.timeOffset.description",
+					"校准歌词与歌曲的同步。正数解决歌词偏早，负数解决歌词偏晚。",
+				)}
+				configAtom={smtcTimeOffsetAtom}
+				type="number"
+				step={50}
+				placeholder="0"
+			/>
+
+			<SwitchSettings
+				label={t(
+					"page.settings.smtc.enableWsLyrics.label",
+					"启用 WebSocket 歌词源",
+				)}
+				description={t(
+					"page.settings.smtc.enableWsLyrics.description",
+					"允许在 SMTC 模式下通过 WebSocket 接收歌词。",
+				)}
+				configAtom={enableWsLyricsInSmtcModeAtom}
+			/>
+
+			<SettingEntry
+				label={t("page.settings.smtc.session.label")}
+				description={t("page.settings.smtc.session.description")}
+			>
+				<Select.Root
+					value={selectedSession ?? "null"}
+					onValueChange={handleSessionChange}
+				>
+					<Select.Trigger />
+					<Select.Content>
+						{sessionMenu.map((item) => (
+							<Select.Item key={item.value} value={item.value}>
+								{item.label}
+							</Select.Item>
+						))}
+					</Select.Content>
+				</Select.Root>
+			</SettingEntry>
+
+			<SettingEntry
+				label={t("page.settings.smtc.textConversion.label")}
+				description={t("page.settings.smtc.textConversion.description")}
+			>
+				<Select.Root
+					value={textConversion}
+					onValueChange={(v) =>
+						handleTextConversionChange(v as TextConversionMode)
+					}
+				>
+					<Select.Trigger />
+					<Select.Content>
+						{textConversionMenu.map((item) => (
+							<Select.Item key={item.value} value={item.value}>
+								{item.label}
+							</Select.Item>
+						))}
+					</Select.Content>
+				</Select.Root>
+			</SettingEntry>
+
+			<Card mt="2">
+				<Flex direction="row" align="center" gap="4">
+					<Flex direction="column" flexGrow="1">
+						<Text as="div">调试工具</Text>
+						<Text as="div" color="gray" size="2">
+							手动触发一次全面的状态刷新
+						</Text>
+					</Flex>
+					<Button
+						onClick={handleForceUpdateClick}
+						variant="soft"
+						color="orange"
+					>
+						强制刷新
+					</Button>
+				</Flex>
+			</Card>
+		</>
+	);
+};
+
+export const PlayerSettingsTab: FC<{ category: string }> = ({ category }) => {
+	switch (category) {
+		case "general":
+			return <GeneralSettings />;
+		case "lyricContent":
+			return <LyricContentSettings />;
+		case "lyricAppearance":
+			return <LyricAppearanceSettings />;
+		case "musicInfoAppearance":
+			return <MusicInfoAppearanceSettings />;
+		case "lyricBackground":
+			return <LyricBackgroundSettings />;
+		case "others":
+			return <OthersSettings />;
+		case "about":
+			return <AboutSettings />;
+		case "smtc":
+			return <SmtcSettings />;
+		default:
+			return null;
+	}
 };

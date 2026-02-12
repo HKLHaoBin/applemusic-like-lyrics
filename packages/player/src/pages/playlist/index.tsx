@@ -29,7 +29,7 @@ import { ViewportList } from "react-viewport-list";
 import { PageContainer } from "../../components/PageContainer/index.tsx";
 import { PlaylistCover } from "../../components/PlaylistCover/index.tsx";
 import { PlaylistSongCard } from "../../components/PlaylistSongCard/index.tsx";
-import { type Song, db } from "../../dexie.ts";
+import { db, type Song } from "../../dexie.ts";
 import { emitAudioThread, readLocalMusicMetadata } from "../../utils/player.ts";
 import styles from "./index.module.css";
 
@@ -158,8 +158,8 @@ export const Component: FC = () => {
 					if (platform() !== "android" && platform() !== "ios") {
 						normalized = (await path.normalize(v)).replace(/\\/gi, "/");
 					}
-					console.log(await stat(v));
 					try {
+						console.log(await stat(v));
 						const pathMd5 = md5(normalized);
 						const musicInfo = await readLocalMusicMetadata(normalized);
 
@@ -388,7 +388,7 @@ export const Component: FC = () => {
 									)}
 								</Text>
 								<Flex gap="2">
-									<Button onClick={onPlaylistDefault}>
+									<Button onClick={() => onPlaylistDefault()}>
 										<PlayIcon />
 										<Trans i18nKey="page.playlist.playAll">播放全部</Trans>
 									</Button>
@@ -415,7 +415,7 @@ export const Component: FC = () => {
 							asChild
 						>
 							<motion.div
-								animate={{
+								style={{
 									gap: playlistInfoGapSize,
 								}}
 							>
@@ -437,7 +437,7 @@ export const Component: FC = () => {
 									)}
 								</Text>
 								<Flex gap="2">
-									<IconButton onClick={onPlaylistDefault}>
+									<IconButton onClick={() => onPlaylistDefault()}>
 										<PlayIcon />
 									</IconButton>
 									<IconButton variant="soft" onClick={onAddLocalMusics}>

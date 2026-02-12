@@ -5,14 +5,15 @@
  * @author SteveXMH
  */
 
+import * as lyrics from "@applemusic-like-lyrics/lyric";
 import {
-	type LyricLine as RawLyricLine,
 	parseLrc,
 	parseLys,
 	parseQrc,
+	parseTTML,
 	parseYrc,
+	type LyricLine as RawLyricLine,
 } from "@applemusic-like-lyrics/lyric";
-import { parseTTML } from "@applemusic-like-lyrics/ttml";
 import GUI from "lil-gui";
 import Stats from "stats.js";
 import type { LyricLine } from ".";
@@ -21,12 +22,10 @@ import {
 	MeshGradientRenderer,
 	PixiRenderer,
 } from "./bg-render";
-import {
-	CanvasLyricPlayer,
-	type DomLyricPlayer,
-	type LyricLineMouseEvent,
-} from "./lyric-player";
+import { DomLyricPlayer, type LyricLineMouseEvent } from "./lyric-player";
 import type { SpringParams } from "./utils/spring";
+
+(window as any).lyrics = lyrics;
 
 const audio = document.createElement("audio");
 audio.volume = 0.5;
@@ -67,10 +66,13 @@ const debugValues = {
 		this.playing = false;
 		if (audio.paused) {
 			audio.play();
+			lyricPlayer.resume();
 		} else {
 			audio.pause();
+			lyricPlayer.pause();
 		}
 	},
+	fadeWidth: 0.5,
 	lineSprings: {
 		posX: {
 			mass: 1,
@@ -126,7 +128,7 @@ gui
 	.name("歌词文件")
 	.onFinishChange(async (url: string) => {
 		lyricPlayer.setLyricLines(
-			parseTTML(await (await fetch(url)).text()).lyricLines,
+			parseTTML(await (await fetch(url)).text()).lines.map(mapTTMLLyric),
 		);
 	});
 gui
@@ -187,6 +189,12 @@ bgGui
 {
 	const animation = gui.addFolder("歌词行动画/效果");
 	animation
+		.add(debugValues, "fadeWidth", 0, 10, 0.01)
+		.name("歌词渐变宽度")
+		.onChange((v: number) => {
+			lyricPlayer.setWordFadeWidth(v);
+		});
+	animation
 		.add(debugValues, "enableBlur")
 		.name("启用歌词模糊")
 		.onChange((v: boolean) => {
@@ -232,7 +240,7 @@ const progress = playerGui
 playerGui.add(debugValues, "play").name("加载/播放");
 playerGui.add(debugValues, "pause").name("暂停/继续");
 
-const lyricPlayer = new CanvasLyricPlayer();
+const lyricPlayer = new DomLyricPlayer();
 
 lyricPlayer.addEventListener("line-click", (evt) => {
 	const e = evt as LyricLineMouseEvent;
@@ -240,6 +248,7 @@ lyricPlayer.addEventListener("line-click", (evt) => {
 	evt.stopImmediatePropagation();
 	evt.stopPropagation();
 	console.log(e.line, e.lineIndex);
+	audio.currentTime = e.line.getLine().startTime / 1000;
 });
 
 const stats = new Stats();
@@ -274,16 +283,16 @@ declare global {
 	}
 }
 
-window.globalLyricPlayer = lyricPlayer;
+(window as any).globalLyricPlayer = lyricPlayer;
 
-const waitFrame = (): Promise<void> =>
+const waitFrame = (): Promise<number> =>
 	new Promise((resolve) => requestAnimationFrame(resolve));
 const mapLyric = (
 	line: RawLyricLine,
 	_i: number,
 	_lines: RawLyricLine[],
 ): LyricLine => ({
-	words: line.words,
+	words: line.words.map((word) => ({ obscene: false, romanWord: "", ...word })),
 	startTime: line.words[0]?.startTime ?? 0,
 	endTime:
 		line.words[line.words.length - 1]?.endTime ?? Number.POSITIVE_INFINITY,
@@ -293,11 +302,17 @@ const mapLyric = (
 	isDuet: false,
 });
 
+const mapTTMLLyric = (line: RawLyricLine): LyricLine => ({
+	...line,
+	words: line.words.map((word) => ({ obscene: false, romanWord: "", ...word })),
+	romanLyric: "",
+});
+
 async function loadLyric() {
 	const lyricFile = debugValues.lyric;
 	const content = await (await fetch(lyricFile)).text();
 	if (lyricFile.endsWith(".ttml")) {
-		lyricPlayer.setLyricLines(parseTTML(content).lyricLines);
+		lyricPlayer.setLyricLines(parseTTML(content).lines.map(mapTTMLLyric));
 	} else if (lyricFile.endsWith(".lrc")) {
 		lyricPlayer.setLyricLines(parseLrc(content).map(mapLyric));
 	} else if (lyricFile.endsWith(".yrc")) {
@@ -306,6 +321,52 @@ async function loadLyric() {
 		lyricPlayer.setLyricLines(parseLys(content).map(mapLyric));
 	} else if (lyricFile.endsWith(".qrc")) {
 		lyricPlayer.setLyricLines(parseQrc(content).map(mapLyric));
+	} else if (lyricFile === "bug") {
+		const buildLyricLines = (
+			lyric: string,
+			startTime = 1000,
+			otherParams: Partial<LyricLine> = {},
+		): LyricLine => {
+			let curTime = startTime;
+			const words = [];
+			for (const word of lyric.split("|")) {
+				const [text, duration] = word.split(",");
+				const endTime = curTime + Number.parseInt(duration);
+				words.push({
+					word: text,
+					romanWord: "",
+					startTime: curTime,
+					endTime,
+					obscene: false,
+				});
+				curTime = endTime;
+			}
+			return {
+				startTime,
+				endTime: curTime + 3000,
+				translatedLyric: "",
+				romanLyric: "",
+				isBG: false,
+				isDuet: false,
+				words,
+				...otherParams,
+			};
+		};
+
+		const DEMO_LYRIC: LyricLine[] = [
+			buildLyricLines(
+				"Apple ,750|Music ,500|Like ,500|Ly,400|ri,500|cs ,250",
+				1000,
+			),
+			buildLyricLines("BG ,750|Lyrics ,1000", 2000, {
+				isBG: true,
+			}),
+			buildLyricLines("Next ,1000|Lyrics,1000", 2500, {
+				// isDuet: true,
+			}),
+		];
+
+		lyricPlayer.setLyricLines(DEMO_LYRIC);
 	}
 }
 

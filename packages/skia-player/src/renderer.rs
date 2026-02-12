@@ -6,21 +6,18 @@ use std::{io::Cursor, time::Instant};
 use anyhow::{Context, Result};
 use byteorder::{WriteBytesExt, LE};
 use skia_safe::{
-    canvas::{self, SaveLayerFlags, SaveLayerRec},
-    image_filters::CropRect,
-    runtime_effect::ChildPtr,
-    textlayout::{FontCollection, ParagraphBuilder, ParagraphStyle, TextStyle},
-    utils::Camera3D,
-    BlurStyle, Canvas, ClipOp, Color4f, Data, Font, FontMgr, IRect, ISize, Image, ImageFilter,
-    MaskFilter, Paint, Point, RRect, Rect, RuntimeEffect, SamplingOptions, Shader, Size, TextBlob,
-    TextEncoding, Typeface,
+    canvas::SaveLayerRec, image_filters::CropRect, runtime_effect::ChildPtr, BlendMode, BlurStyle,
+    Canvas, Color4f, Data, Font, FontMgr, IRect, ISize, Image, ImageFilter, MaskFilter, Paint,
+    Point, RRect, Rect, RuntimeEffect, SamplingOptions, Shader, Size, TextBlob, Typeface,
 };
 use tracing::info;
 
 use self::lyric_renderer::LyricRenderer;
 
-const PINGFANG_SC: &[u8] = include_bytes!("../assets/PingFangSC-Regular.ttf");
-const SF_PRO_TEXT: &[u8] = include_bytes!("../assets/SF-Pro.ttf");
+// const PINGFANG_SC: &[u8] = include_bytes!("../assets/PingFangSC-Regular.ttf");
+// const SF_PRO_TEXT: &[u8] = include_bytes!("../assets/SF-Pro.ttf");
+const PINGFANG_SC: &[u8] = &[];
+const SF_PRO_TEXT: &[u8] = &[];
 
 struct ImageSprite {
     image: Image,
@@ -113,9 +110,10 @@ pub struct Renderer {
     frame_time: Instant,
     frame: usize,
     cur_frame: usize,
-    progress: f64,
-    width: usize,
-    height: usize,
+    progress: u64,
+    scale: f32,
+    physical_width: usize,
+    physical_height: usize,
     cur_album_images: Option<Image>,
     fading_album_images: Vec<(Image, Instant)>,
     cur_bg_objs: Option<BarrelRoller>,
@@ -129,10 +127,26 @@ struct LyricLineObject {
 
 impl Renderer {
     pub fn new() -> Self {
-        let pingfang_type_face =
-            Typeface::from_data(unsafe { Data::new_bytes(PINGFANG_SC) }, None).unwrap();
-        let sf_pro_type_face =
-            Typeface::from_data(unsafe { Data::new_bytes(SF_PRO_TEXT) }, None).unwrap();
+        let font_mgr = FontMgr::new();
+
+        // for family in font_mgr.family_names() {
+        //     info!("Font family: {}", family);
+        // }
+
+        // let pingfang_type_face = font_mgr
+        //     .new_from_data(&Data::new_copy(PINGFANG_SC), None)
+        //     .unwrap();
+        // let sf_pro_type_face = font_mgr
+        //     .new_from_data(&Data::new_copy(SF_PRO_TEXT), None)
+        //     .unwrap();
+        let pingfang_type_face = font_mgr
+            .match_family("PingFang UI SC")
+            .new_typeface(2)
+            .unwrap();
+        let sf_pro_type_face = font_mgr
+            .match_family("SF Pro Text")
+            .new_typeface(0)
+            .unwrap();
 
         Self {
             lyric_renderer: LyricRenderer::new(
@@ -140,14 +154,15 @@ impl Renderer {
                 sf_pro_type_face.clone(),
             ),
             pingfang_type_face,
-            progress: 0.,
+            progress: 0,
             sf_pro_type_face,
             fps_time: Instant::now(),
             frame_time: Instant::now(),
             frame: 0,
+            scale: 1.0,
             cur_frame: 0,
-            width: 0,
-            height: 0,
+            physical_width: 0,
+            physical_height: 0,
             cur_album_images: None,
             fading_album_images: Vec::with_capacity(16),
             cur_bg_objs: None,
@@ -158,6 +173,12 @@ impl Renderer {
 
     pub fn render(&mut self, canvas: &Canvas) {
         canvas.clear(skia_safe::Color::from_rgb(0x33, 0x33, 0x33));
+
+        canvas.reset_matrix();
+
+        canvas.scale((self.scale, self.scale));
+
+        canvas.save();
 
         self.draw_background(canvas);
         self.draw_album_image(canvas);
@@ -200,10 +221,12 @@ impl Renderer {
             self.fps_time = Instant::now();
         }
         self.frame_time = Instant::now();
+
+        canvas.restore();
     }
 
     fn draw_debug_text(&self, canvas: &Canvas, text: &str, pos: Point) -> f32 {
-        let font = Font::from_typeface(&self.pingfang_type_face, 16.);
+        let font = Font::from_typeface(&self.pingfang_type_face, 12. * self.scale);
         let tb = TextBlob::new(text, &font).unwrap();
         canvas.draw_text_blob(
             &tb,
@@ -222,6 +245,14 @@ impl Renderer {
         self.vsync = vsync;
     }
 
+    fn logical_width(&self) -> f32 {
+        self.physical_width as f32 / self.scale
+    }
+
+    fn logical_height(&self) -> f32 {
+        self.physical_height as f32 / self.scale
+    }
+
     fn draw_background(&mut self, canvas: &Canvas) {
         // Draw album image as background and blur it
 
@@ -234,81 +265,55 @@ impl Renderer {
                 Rect::new(
                     -60.,
                     -60.,
-                    self.width as f32 + 60.,
-                    self.height as f32 + 60.,
+                    self.logical_width() + 60.,
+                    self.logical_height() + 60.,
                 ),
                 &Paint::new(Color4f::new(1., 1., 1., 1.), None),
             );
-            let _ = self.blur_screen(canvas, 5.);
-            let _ = self.blur_screen(canvas, 10.);
-            let _ = self.blur_screen(canvas, 20.);
-            let _ = self.blur_screen(canvas, 40.);
-            let _ = self.blur_screen(canvas, 80.);
-            let min_border = self.width.min(self.height);
-            if min_border > 768 {
-                let _ = self.blur_screen(canvas, 160.);
-                if min_border > 768 * 2 {
-                    let _ = self.blur_screen(canvas, 320.);
-                }
-            }
-            let _ = self.blur_screen(canvas, 5.);
-            let _ = self.blur_screen(canvas, 2.);
+
+            let blur_filter = skia_safe::image_filters::blur(
+                (80. * self.scale, 80. * self.scale),
+                None,
+                None,
+                CropRect::NO_CROP_RECT,
+            )
+            .unwrap();
+
+            let blur_layer = SaveLayerRec::default().backdrop(&blur_filter);
+
+            canvas.save_layer(&blur_layer);
+
+            canvas.draw_rect(
+                Rect::from_iwh(self.logical_width() as _, self.logical_height() as _),
+                Paint::default()
+                    .set_blend_mode(BlendMode::DstIn)
+                    .set_dither(true),
+            );
+
             canvas.restore();
         }
     }
 
-    fn blur_screen(&mut self, canvas: &Canvas, strength: f32) -> Result<()> {
-        debug_assert!(strength >= 0.0);
-        // Skia Safe 缺乏 SkRuntimeEffectBuilder 支持
-        fn take_snapshot(canvas: &Canvas, width: usize, height: usize) -> Result<Shader> {
-            unsafe { canvas.surface() }
-                .context("Failed to get surface")?
-                .image_snapshot_with_bounds(IRect::from_size(ISize::new(width as _, height as _)))
-                .context("Failed to get image snapshot")?
-                .to_shader(None, SamplingOptions::default(), None)
-                .context("Failed to take snapshot")
-        }
-        fn blur_once(
-            canvas: &Canvas,
-            width: usize,
-            height: usize,
-            strength_x: f32,
-            strength_y: f32,
-        ) -> Result<()> {
-            let snapshot = take_snapshot(canvas, width, height)?;
-            let mut data = Cursor::new(vec![0u8; 4]);
-            data.write_f32::<LE>(width as _)?;
-            data.write_f32::<LE>(height as _)?;
-            data.write_f32::<LE>(strength_x)?;
-            data.write_f32::<LE>(strength_y)?;
-            let effect =
-                RuntimeEffect::make_for_shader(include_str!("./renderer/kawase-blur.sksl"), None)
-                    .unwrap();
-            let shader = effect
-                .make_shader(
-                    Data::new_copy(data.into_inner().as_slice()),
-                    &[ChildPtr::Shader(snapshot)],
-                    None,
-                )
-                .context("Failed to make shader")?;
-            canvas.draw_paint(Paint::new(Color4f::new(1., 1., 1., 1.), None).set_shader(shader));
-            Ok(())
-        }
-        blur_once(canvas, self.width, self.height, strength, 0.0)?;
-        blur_once(canvas, self.width, self.height, 0.0, strength)?;
-        Ok(())
-    }
-
     fn draw_album_image(&mut self, canvas: &Canvas) {
-        let album_size = (self.height as f32 * 0.5).min(self.width as f32 * 0.4);
+        let album_size = (self.logical_height() * 0.5).min(self.logical_width() * 0.4);
         let rect = Rect::from_xywh(
-            (self.width as f32 / 7.0 * 3.0 - album_size) / 2.0,
-            (self.height as f32 - album_size) / 2.0,
+            (self.logical_width() / 7.0 * 3.0 - album_size) / 2.0,
+            (self.logical_height() - album_size) / 2.0,
             album_size,
             album_size,
         );
         let radius = album_size * 0.05;
         let rrect = RRect::new_rect_xy(rect, radius, radius);
+
+        {
+            let rrect = skia_safe::Path::rrect(rrect, None);
+
+            canvas.draw_path(
+                &rrect,
+                skia_safe::Paint::new(Color4f::new(0., 0., 0., 0.35), None)
+                    .set_mask_filter(MaskFilter::blur(BlurStyle::Normal, album_size * 0.05, None)),
+            );
+        }
 
         canvas.save();
         canvas.clip_rrect(rrect, None, Some(true));
@@ -332,18 +337,29 @@ impl Renderer {
                 &skia_safe::Paint::new(Color4f::new(1., 1., 1., alpha), None),
             );
         }
+
         canvas.restore();
+
+        canvas.draw_rrect(
+            rrect,
+            Paint::new(Color4f::new(0., 0., 0., 0.35), None)
+                .set_stroke(true)
+                .set_anti_alias(true)
+                .set_stroke_width(2.),
+        );
+
         self.lyric_renderer.render(canvas);
     }
 
-    pub fn set_size(&mut self, width: usize, height: usize) {
-        self.width = width;
-        self.height = height;
+    pub fn set_size(&mut self, physical_width: usize, physical_height: usize, scale: f32) {
+        self.scale = scale;
+        self.physical_width = physical_width;
+        self.physical_height = physical_height;
         self.lyric_renderer.set_rect(Rect::from_xywh(
-            self.width as f32 / 7.0 * 3.0,
+            self.logical_width() / 7.0 * 3.0,
             0.,
-            self.width as f32 / 7.0 * 4.0,
-            self.height as f32,
+            self.logical_width() / 7.0 * 4.0,
+            self.logical_height(),
         ))
     }
 
@@ -352,9 +368,9 @@ impl Renderer {
         self.lyric_renderer.set_lines(lines);
     }
 
-    pub fn set_progress(&mut self, time: f64) {
+    pub fn set_progress(&mut self, time: u64) {
         self.progress = time;
-        self.lyric_renderer.set_progress(time);
+        self.lyric_renderer.set_current_time(time);
     }
 
     pub fn set_album_image(&mut self, image: impl AsRef<[u8]>) {

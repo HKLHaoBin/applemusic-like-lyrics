@@ -1,8 +1,8 @@
-import type { Disposable, HasElement } from "../interfaces";
+import type { Disposable, HasElement } from "../interfaces.ts";
 import styles from "../styles/lyric-player.module.css";
-import { measure } from "../utils/schedule.js";
-import { Spring } from "../utils/spring";
-import type { LyricPlayerBase } from "./base";
+import { measure } from "../utils/schedule.ts";
+import { Spring } from "../utils/spring.ts";
+import type { LyricPlayerBase } from "./base.ts";
 
 export class BottomLineEl implements HasElement, Disposable {
 	private element: HTMLElement = document.createElement("div");
@@ -10,7 +10,7 @@ export class BottomLineEl implements HasElement, Disposable {
 	private top = 0;
 	private delay = 0;
 	// 由 LyricPlayer 来设置
-	lineSize: number[] = [0, 0];
+	lineSize: [number, number] = [0, 0];
 	readonly lineTransforms = {
 		posX: new Spring(0),
 		posY: new Spring(0),

@@ -3,13 +3,13 @@
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-use crate::{utils::process_lyrics, LyricLine, LyricWord};
+use crate::{LyricLine, LyricWord, utils::process_lyrics};
 
 use std::fmt::Write;
 use std::{borrow::Cow, str::FromStr};
 
+use nom::{IResult, Parser, character::complete::line_ending};
 use nom::{bytes::complete::*, combinator::opt, multi::many0};
-use nom::{character::complete::line_ending, IResult};
 
 fn process_time<'a>(
     src: &'a str,
@@ -22,7 +22,7 @@ fn process_time<'a>(
             return Err(nom::Err::Error(nom::error::Error {
                 input: src,
                 code: nom::error::ErrorKind::Digit,
-            }))
+            }));
         }
     };
     let duration = match u64::from_str(duration) {
@@ -31,7 +31,7 @@ fn process_time<'a>(
             return Err(nom::Err::Error(nom::error::Error {
                 input: src,
                 code: nom::error::ErrorKind::Digit,
-            }))
+            }));
         }
     };
 
@@ -81,6 +81,7 @@ pub fn parse_word(src: &str) -> IResult<&str, LyricWord<'_>> {
                     start_time,
                     end_time: start_time + duration,
                     word: Cow::Borrowed(&src[..i]),
+                    roman_word: std::borrow::Cow::Borrowed(""),
                 },
             ));
         }
@@ -98,7 +99,7 @@ fn test_word() {
 }
 
 pub fn parse_words(src: &str) -> IResult<&str, Vec<LyricWord<'_>>> {
-    let (src, words) = many0(parse_word)(src)?;
+    let (src, words) = many0(parse_word).parse(src)?;
     Ok((src, words))
 }
 
@@ -106,7 +107,7 @@ pub fn parse_line(src: &str) -> IResult<&str, LyricLine<'_>> {
     let (src, (is_bg, is_duet)) = parse_property(src)?;
     match is_not("\r\n")(src) {
         Ok((src, line)) => {
-            let (src, _) = opt(line_ending)(src)?;
+            let (src, _) = opt(line_ending).parse(src)?;
             let (_, words) = parse_words(line)?;
             Ok((
                 src,
@@ -137,7 +138,7 @@ pub fn parse_line(src: &str) -> IResult<&str, LyricLine<'_>> {
     }
 }
 
-pub fn parse_lys(src: &str) -> Vec<LyricLine> {
+pub fn parse_lys<'a>(src: &'a str) -> Vec<LyricLine<'a>> {
     let lines = src.lines();
     let mut result = Vec::with_capacity(lines.size_hint().1.unwrap_or(1024).min(1024));
 

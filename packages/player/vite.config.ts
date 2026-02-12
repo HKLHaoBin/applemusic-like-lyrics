@@ -1,14 +1,16 @@
 import react from "@vitejs/plugin-react";
-import { execSync } from "child_process";
+import { execSync } from "node:child_process";
 import jotaiDebugLabel from "jotai/babel/plugin-debug-label";
 import jotaiReactRefresh from "jotai/babel/plugin-react-refresh";
-import { resolve } from "path";
+import { resolve } from "node:path";
 import { type Plugin, defineConfig } from "vite";
 import i18nextLoader from "vite-plugin-i18next-loader";
 import lightningcss from "vite-plugin-lightningcss";
 import svgr from "vite-plugin-svgr";
-import topLevelAwait from "vite-plugin-top-level-await";
 import wasm from "vite-plugin-wasm";
+import MillionLint from "@million/lint";
+
+const host = process.env.TAURI_DEV_HOST;
 
 function getCommitHash() {
 	try {
@@ -71,39 +73,42 @@ const GitMetadataPlugin = (): Plugin => {
 		},
 		load(id) {
 			if (id === RESOLVED_VIRTUAL_ID) {
-				return `export const commit = ${JSON.stringify(gitCommit)};\nexport const branch = ${JSON.stringify(gitBranch)};`;
+				return `export const commit = ${JSON.stringify(
+					gitCommit,
+				)};\nexport const branch = ${JSON.stringify(gitBranch)};`;
 			}
 		},
 	};
 };
 
-const ReactCompilerConfig = {
-	target: "18",
-};
-
 // https://vitejs.dev/config/
-export default defineConfig(async () => ({
+export default defineConfig({
 	build: {
+		target:
+			process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari15",
+		minify: !process.env.TAURI_ENV_DEBUG ? "esbuild" : false,
 		modulePreload: {
 			polyfill: false,
 		},
 		rollupOptions: {
 			shimMissingExports: true,
+			input: {
+				index: resolve(__dirname, "index.html"),
+				screenshot: resolve(__dirname, "screenshot.html"),
+			},
 		},
 		sourcemap: "inline",
 	},
 	plugins: [
+		MillionLint.vite(),
 		react({
 			babel: {
-				plugins: [
-					["babel-plugin-react-compiler", ReactCompilerConfig],
-					jotaiDebugLabel,
-					jotaiReactRefresh,
-				],
+				plugins: [jotaiDebugLabel, jotaiReactRefresh],
 			},
 		}),
 		wasm(),
-		topLevelAwait(),
+		// topLevelAwait(),
+
 		svgr({
 			svgrOptions: {
 				ref: true,
@@ -120,7 +125,7 @@ export default defineConfig(async () => ({
 		}),
 	],
 	resolve: {
-		dedupe: ["react", "react-dom", "react-compiler-runtime", "jotai"],
+		dedupe: ["react", "react-dom", "jotai"],
 		alias: {
 			"@applemusic-like-lyrics/core": resolve(__dirname, "../core/src"),
 			"@applemusic-like-lyrics/react": resolve(__dirname, "../react/src"),
@@ -138,7 +143,7 @@ export default defineConfig(async () => ({
 	// 2. tauri expects a fixed port, fail if that port is not available
 	server: {
 		port: 1420,
-		host: process.env.TAURI_DEV_HOST || undefined,
+		host: host || false,
 		strictPort: true,
 		warmup: {
 			clientFiles: [
@@ -148,8 +153,15 @@ export default defineConfig(async () => ({
 				"src/**/*.svg?react",
 			],
 		},
+		hmr: host
+			? {
+					protocol: "ws",
+					host,
+					port: 1421,
+				}
+			: undefined,
 	},
 	// 3. to make use of `TAURI_DEBUG` and other env variables
 	// https://tauri.studio/v1/api/config#buildconfig.beforedevcommand
 	envPrefix: ["VITE_", "TAURI_"],
-}));
+});

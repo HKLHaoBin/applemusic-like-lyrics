@@ -5,30 +5,35 @@
       "options": {
         "cacheableOperations": [
           "build:dev",
-          "build",
-          "fmt"
+          "build"
         ]
       }
     }
   },
   "targetDefaults": {
     "fmt": {
-      "dependsOn": [
-        "^fmt"
-      ],
+      "cache": true,
       "outputs": [
         "{projectRoot}/src"
       ]
     },
     "build": {
-      "dependsOn": ["^build", "fmt"],
+      "cache": true,
+      "dependsOn": [
+        "^build"
+      ],
+      "maxParallel": 1,
       "outputs": [
         "{projectRoot}/dist",
         "{projectRoot}/pkg"
       ]
     },
     "build:dev": {
-      "dependsOn": ["^build:dev"],
+      "cache": true,
+      "dependsOn": [
+        "^build:dev"
+      ],
+      "maxParallel": 1,
       "outputs": [
         "{projectRoot}/dist",
         "{projectRoot}/pkg"

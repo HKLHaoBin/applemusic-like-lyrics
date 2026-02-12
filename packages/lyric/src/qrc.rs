@@ -1,13 +1,14 @@
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-use crate::{utils::process_lyrics, LyricLine, LyricWord};
+use crate::{LyricLine, LyricWord, utils::process_lyrics};
 
 use std::fmt::Write;
 use std::{borrow::Cow, str::FromStr};
 
 use nom::{
-    bytes::complete::*, character::complete::line_ending, combinator::opt, multi::many0, IResult,
+    IResult, Parser, bytes::complete::*, character::complete::line_ending, combinator::opt,
+    multi::many0,
 };
 
 fn process_time<'a>(
@@ -64,6 +65,7 @@ pub fn parse_word(src: &str) -> IResult<&str, LyricWord<'_>> {
                     start_time,
                     end_time: start_time + duration,
                     word: Cow::Borrowed(&src[..i]),
+                    roman_word: std::borrow::Cow::Borrowed(""),
                 },
             ));
         }
@@ -81,7 +83,7 @@ fn test_word() {
 }
 
 pub fn parse_words(src: &str) -> IResult<&str, Vec<LyricWord<'_>>> {
-    let (src, words) = many0(parse_word)(src)?;
+    let (src, words) = many0(parse_word).parse(src)?;
     Ok((src, words))
 }
 
@@ -89,7 +91,7 @@ pub fn parse_line(src: &str) -> IResult<&str, LyricLine<'_>> {
     let (src, _) = parse_time(src)?;
     match is_not("\r\n")(src) {
         Ok((src, line)) => {
-            let (src, _) = opt(line_ending)(src)?;
+            let (src, _) = opt(line_ending).parse(src)?;
             let (_, words) = parse_words(line)?;
             Ok((
                 src,
@@ -116,7 +118,7 @@ pub fn parse_line(src: &str) -> IResult<&str, LyricLine<'_>> {
     }
 }
 
-pub fn parse_qrc(src: &str) -> Vec<LyricLine> {
+pub fn parse_qrc<'a>(src: &'a str) -> Vec<LyricLine<'a>> {
     let lines = src.lines();
     let mut result = Vec::with_capacity(lines.size_hint().1.unwrap_or(1024).min(1024));
 

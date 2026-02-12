@@ -2,7 +2,7 @@
 
 identifier = "migrated"
 local = true
-windows = ["main"]
+windows = ["main", "screenshot"]
 
 [[permissions]]
 identifier = "core:window:default"
@@ -39,6 +39,8 @@ identifier = "core:window:allow-set-effects"
 [[permissions]]
 identifier = "core:window:allow-show"
 [[permissions]]
+identifier = "core:window:allow-set-theme"
+[[permissions]]
 identifier = "shell:default"
 [[permissions]]
 identifier = "fs:default"
@@ -52,7 +54,7 @@ identifier = "fs:allow-rename"
 identifier = "fs:allow-remove"
 [[permissions]]
 identifier = "fs:scope"
-allow = ["$APPDATA/**"]
+allow = ["$APPDATA/**", "$HOME/**"]
 [[permissions]]
 identifier = "fs:allow-stat"
 [[permissions]]

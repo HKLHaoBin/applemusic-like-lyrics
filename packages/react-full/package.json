@@ -1,80 +1,82 @@
 {
-  "name": "@applemusic-like-lyrics/react-full",
-  "version": "0.2.0-alpha.1",
-  "description": "AMLL 组件库的 React 绑定，但是更加完备且高度灵活",
-  "repository": {
-    "url": "https://github.com/Steve-xmh/applemusic-like-lyrics.git",
-    "directory": "packages/react-full",
-    "type": "git"
-  },
-  "type": "module",
-  "license": "GPL-3.0",
-  "main": "dist/amll-react-framework.cjs",
-  "module": "./dist/amll-react-framework.js",
-  "typings": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "import": "./dist/amll-react-framework.js",
-      "require": "./dist/amll-react-framework.cjs",
-      "types": "./dist/index.d.ts"
-    },
-    "./style.css": {
-      "import": "./dist/style.css",
-      "require": "./dist/style.css"
-    }
-  },
-  "files": [
-    "dist/**/*.js",
-    "dist/**/*.ts",
-    "dist/**/*.cjs",
-    "dist/**/*.map"
-  ],
-  "scripts": {
-    "build:docs": "typedoc --plugin typedoc-plugin-markdown --out docs src/index.ts",
-    "build": "vite build",
-    "build:dev": "vite build",
-    "fmt": "biome format --write ./src",
-    "dev": "vite dev",
-    "preinstall": "npx only-allow pnpm"
-  },
-  "devDependencies": {
-    "@applemusic-like-lyrics/lyric": "workspace:^",
-    "@biomejs/biome": "^1.9.4",
-    "@pixi/app": "^7.4.2",
-    "@pixi/core": "^7.4.2",
-    "@pixi/display": "^7.4.2",
-    "@pixi/filter-blur": "^7.4.2",
-    "@pixi/filter-color-matrix": "^7.4.2",
-    "@pixi/sprite": "^7.4.2",
-    "@radix-ui/themes": "^3.1.4",
-    "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
-    "@types/ungap__structured-clone": "^1.2.0",
-    "@vitejs/plugin-react": "^4.3.3",
-    "babel-plugin-react-compiler": "19.0.0-beta-6fc168f-20241025",
-    "jotai": "^2.10.1",
-    "react": "^18.3.1",
-    "react-compiler-runtime": "19.0.0-beta-6fc168f-20241025",
-    "react-dom": "^18.3.1",
-    "typedoc": "^0.26.10",
-    "typedoc-plugin-markdown": "^4.2.9",
-    "typescript": "^5.6.3",
-    "vite": "^5.4.10",
-    "vite-plugin-dts": "^4.3.0",
-    "vite-plugin-svgr": "^4.3.0",
-    "vite-plugin-wasm": "^3.3.0"
-  },
-  "dependencies": {
-    "@applemusic-like-lyrics/core": "workspace:^",
-    "@applemusic-like-lyrics/react": "workspace:^",
-    "@ungap/structured-clone": "^1.2.0",
-    "classnames": "^2.5.1",
-    "corner-smoothing": "^0.1.5",
-    "framer-motion": "^11.11.11"
-  },
-  "peerDependencies": {
-    "jotai": "*",
-    "react": "*",
-    "react-dom": "*"
-  }
+	"name": "@applemusic-like-lyrics/react-full",
+	"version": "0.2.0-alpha.2",
+	"description": "AMLL 组件库的 React 绑定，但是更加完备且高度灵活",
+	"repository": {
+		"url": "https://github.com/Steve-xmh/applemusic-like-lyrics.git",
+		"directory": "packages/react-full",
+		"type": "git"
+	},
+	"license": "GPL-3.0",
+	"nx": {
+		"tags": [
+			"library"
+		]
+	},
+	"type": "module",
+	"main": "dist/amll-react-framework.cjs",
+	"module": "./dist/amll-react-framework.js",
+	"typings": "./dist/index.d.ts",
+	"style": "./dist/amll-react-framework.css",
+	"exports": {
+		".": {
+			"import": "./dist/amll-react-framework.js",
+			"require": "./dist/amll-react-framework.cjs",
+			"types": "./dist/index.d.ts"
+		},
+		"./style.css": {
+			"import": "./dist/amll-react-framework.css",
+			"require": "./dist/amll-react-framework.css"
+		}
+	},
+	"sideEffects": [
+		"*.css"
+	],
+	"files": [
+		"dist/**/*.js",
+		"dist/**/*.ts",
+		"dist/**/*.cjs",
+		"dist/**/*.css",
+		"dist/**/*.map"
+	],
+	"scripts": {
+		"build:docs": "typedoc --plugin typedoc-plugin-markdown --out docs src/index.ts",
+		"build": "vite build",
+		"build:dev": "vite build",
+		"fmt": "biome format --write ./src",
+		"dev": "vite dev",
+		"preinstall": "npx only-allow pnpm"
+	},
+	"dependencies": {
+		"@applemusic-like-lyrics/core": "workspace:^",
+		"@applemusic-like-lyrics/react": "workspace:^",
+		"@ungap/structured-clone": "catalog:",
+		"classnames": "catalog:",
+		"corner-smoothing": "^0.1.5",
+		"framer-motion": "catalog:",
+		"react-toastify": "^11.0.5"
+	},
+	"peerDependencies": {
+		"jotai": "^2",
+		"react": "^19",
+		"react-dom": "^19"
+	},
+	"devDependencies": {
+		"@applemusic-like-lyrics/lyric": "workspace:^",
+		"@biomejs/biome": "catalog:",
+		"@radix-ui/themes": "^3.2.1",
+		"@types/react": "catalog:",
+		"@types/react-dom": "catalog:",
+		"@types/ungap__structured-clone": "^1.2.0",
+		"@vitejs/plugin-react": "catalog:",
+		"babel-plugin-react-compiler": "19.1.0-rc.3",
+		"react-compiler-runtime": "19.1.0-rc.3",
+		"typedoc": "catalog:",
+		"typedoc-plugin-markdown": "catalog:",
+		"typescript": "catalog:",
+		"vite": "catalog:",
+		"vite-plugin-dts": "catalog:",
+		"vite-plugin-svgr": "catalog:",
+		"vite-plugin-wasm": "catalog:"
+	}
 }

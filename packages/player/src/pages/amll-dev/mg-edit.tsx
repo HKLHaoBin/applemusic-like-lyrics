@@ -1,5 +1,4 @@
 import { MeshGradientRenderer } from "@applemusic-like-lyrics/core";
-import { musicCoverAtom } from "@applemusic-like-lyrics/react-full";
 import { ArrowLeftIcon, CodeIcon } from "@radix-ui/react-icons";
 import {
 	Card,
@@ -26,6 +25,7 @@ import {
 	useState,
 } from "react";
 import { useHideNowPlayingBar } from "../../utils/uses.ts";
+import { musicCoverAtom } from "@applemusic-like-lyrics/react-full";
 
 interface ControlPointHandleState {
 	color: [number, number, number];
@@ -61,7 +61,7 @@ const ControlPointHandle: FC<{
 						left: `${(point.x + 1) * 50}%`,
 						top: `${(1 - point.y) * 50}%`,
 					}}
-					cp={`${point.cpX}-${point.cpY}`}
+					data-cp={`${point.cpX}-${point.cpY}`}
 					onMouseDown={(e) => {
 						e.stopPropagation();
 						function checkPos(evt: MouseEvent) {
@@ -261,18 +261,36 @@ const CodeButton: FC<{
 	controlPoints: ControlPointHandleState[];
 }> = ({ controlPoints, controlPointSize }) => {
 	const code = useMemo(() => {
-		const result = [`preset(${controlPointSize}, ${controlPointSize}, [`];
+		// const result = [`preset(${controlPointSize}, ${controlPointSize}, [`];
+		// for (let y = 0; y < controlPointSize; y++) {
+		// 	for (let x = 0; x < controlPointSize; x++) {
+		// 		const point = controlPoints[y * controlPointSize + x];
+		// 		if (point === undefined) continue;
+		// 		result.push(
+		// 			`	p(${x}, ${y}, ${point.x}, ${point.y}, ${point.uRot}, ${point.vRot}, ${point.uScale}, ${point.vScale}),`,
+		// 		);
+		// 	}
+		// }
+		// result.push("]),");
+		// return result.join("\n");
+		const result: (number | number[])[] = [controlPointSize, controlPointSize];
 		for (let y = 0; y < controlPointSize; y++) {
 			for (let x = 0; x < controlPointSize; x++) {
 				const point = controlPoints[y * controlPointSize + x];
 				if (point === undefined) continue;
-				result.push(
-					`	p(${x}, ${y}, ${point.x}, ${point.y}, ${point.uRot}, ${point.vRot}, ${point.uScale}, ${point.vScale}),`,
-				);
+				result.push([
+					x,
+					y,
+					point.x,
+					point.y,
+					point.uRot,
+					point.vRot,
+					point.uScale,
+					point.vScale,
+				]);
 			}
 		}
-		result.push("]),");
-		return result.join("\n");
+		return JSON.stringify(result);
 	}, [controlPoints, controlPointSize]);
 
 	return (
@@ -299,7 +317,7 @@ const CodeButton: FC<{
 export const Component: FC = () => {
 	useHideNowPlayingBar();
 	const frameRef = useRef<HTMLDivElement>(null);
-	const mgRenderer = useRef<MeshGradientRenderer>();
+	const mgRenderer = useRef<MeshGradientRenderer | null>(null);
 	const cover = useAtomValue(musicCoverAtom);
 	const [controlPointSize, setControlPointSize] = useState(4);
 	const [controlPoints, setControlPoints] = useState<ControlPointHandleState[]>(
@@ -351,13 +369,13 @@ export const Component: FC = () => {
 		mgRenderer.current = newRenderer;
 		return () => {
 			newRenderer.dispose();
-			mgRenderer.current = undefined;
+			mgRenderer.current = null;
 		};
 	}, []);
 
 	useEffect(() => {
 		const mgRendererInstance = mgRenderer.current;
-		if (mgRendererInstance === undefined) return;
+		if (!mgRendererInstance) return;
 		try {
 			mgRendererInstance.setAlbum(cover);
 		} catch {}
@@ -365,7 +383,7 @@ export const Component: FC = () => {
 
 	useEffect(() => {
 		const mgRendererInstance = mgRenderer.current;
-		if (mgRendererInstance === undefined) return;
+		if (!mgRendererInstance) return;
 		try {
 			mgRendererInstance.setWireFrame(wireframe);
 		} catch {}

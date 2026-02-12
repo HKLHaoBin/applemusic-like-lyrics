@@ -71,6 +71,9 @@ export type AudioThreadMessageMap = {
 		fromFreq: number;
 		toFreq: number;
 	};
+	setMediaControlsEnabled: {
+		enabled: boolean;
+	};
 	syncStatus: {};
 	close: {};
 };
@@ -153,20 +156,37 @@ export type AudioThreadEvent =
 	  };
 
 const msgTasks = new Map<string, (value: unknown) => void>();
+const eventListeners = new Set<EventCallback<AudioThreadEventMessage<any>>>();
 
-async function initAudioThread() {
+let isInitialized = false;
+
+export async function initAudioThread() {
+	if (isInitialized) {
+		return;
+	}
+	isInitialized = true;
+
 	console.log(
 		chalk.bgHex("#FF7700").hex("#FFFFFF")(" BACKEND  "),
 		"后台线程连接初始化中",
 	);
+
 	await listen<AudioThreadEventMessage<AudioThreadEvent>>(
-		"audio_player_msg",
+		"plugin:player-core-event",
 		(evt) => {
 			const resolve = msgTasks.get(evt.payload.callbackId);
 			if (resolve) {
 				msgTasks.delete(evt.payload.callbackId);
 				resolve(evt.payload.data);
 			}
+
+			eventListeners.forEach((listener) => {
+				try {
+					listener(evt);
+				} catch (e) {
+					console.error("Error in audio event listener callback:", e);
+				}
+			});
 		},
 	);
 	console.log(
@@ -175,11 +195,15 @@ async function initAudioThread() {
 	);
 }
 
-initAudioThread();
-
 export const listenAudioThreadEvent = (
 	handler: EventCallback<AudioThreadEventMessage<AudioThreadEvent>>,
-) => listen("audio_player_msg", handler);
+): Promise<() => void> => {
+	eventListeners.add(handler);
+	const unlisten = () => {
+		eventListeners.delete(handler);
+	};
+	return Promise.resolve(unlisten);
+};
 
 export async function readLocalMusicMetadata(filePath: string): Promise<{
 	name: string;
@@ -200,14 +224,14 @@ export async function restartApp(): Promise<never> {
 export async function emitAudioThread<
 	D extends AudioThreadMessage,
 	T extends D["type"],
->(msgType: T, data: Omit<AudioThreadMessage, "type"> = {}): Promise<void> {
+>(msgType: T, data?: Omit<D, "type">): Promise<void> {
 	const id = uid(32) + Date.now();
 	await invoke("local_player_send_msg", {
 		msg: {
 			callbackId: id,
 			data: {
 				type: msgType,
-				...data,
+				...(data ?? {}),
 			},
 		} as AudioThreadEventMessage<D>,
 	});
@@ -216,7 +240,7 @@ export async function emitAudioThread<
 export function emitAudioThreadRet<
 	D extends AudioThreadMessage,
 	T extends D["type"],
->(msgType: T, data: Omit<AudioThreadMessage, "type"> = {}): Promise<unknown> {
+>(msgType: T, data?: Omit<D, "type">): Promise<unknown> {
 	const id = `${uid(32)}-${Date.now()}`;
 	return new Promise((resolve) => {
 		msgTasks.set(id, resolve);
@@ -225,7 +249,7 @@ export function emitAudioThreadRet<
 				callbackId: id,
 				data: {
 					type: msgType,
-					...data,
+					...(data ?? {}),
 				},
 			} as AudioThreadEventMessage<D>,
 		});

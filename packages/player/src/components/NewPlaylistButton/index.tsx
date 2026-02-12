@@ -1,5 +1,12 @@
 import { PlusIcon } from "@radix-ui/react-icons";
-import { Button, Dialog, Flex, TextField } from "@radix-ui/themes";
+import {
+	Button,
+	Dialog,
+	Flex,
+	Select,
+	Text,
+	TextField,
+} from "@radix-ui/themes";
 import { type FC, useMemo, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { db } from "../../dexie.ts";
@@ -33,12 +40,26 @@ export const NewPlaylistButton: FC = () => {
 				<Dialog.Title>
 					<Trans i18nKey="newPlaylist.dialog.title">新建歌单</Trans>
 				</Dialog.Title>
-				<TextField.Root
-					placeholder={t("newPlaylist.dialog.namePlaceholder", "歌单名称")}
-					value={name}
-					onChange={(e) => setName(e.currentTarget.value)}
-					autoFocus
-				/>
+				<Flex gap="3" direction="column">
+					<Text>
+						<Trans i18nKey="newPlaylist.dialog.name">歌单名称</Trans>
+					</Text>
+					<TextField.Root
+						placeholder={t("newPlaylist.dialog.namePlaceholder", "歌单名称")}
+						value={name}
+						onChange={(e) => setName(e.currentTarget.value)}
+						autoFocus
+					/>
+					<Select.Root>
+						<Select.Trigger placeholder="歌单管理源" />
+						<Select.Content>
+							<Select.Item value="amll-player:local">本地歌曲源</Select.Item>
+							<Select.Item value="amll-player:android-music">
+								安卓内容提供者 - 音频媒体源
+							</Select.Item>
+						</Select.Content>
+					</Select.Root>
+				</Flex>
 				<Flex gap="3" mt="4" justify="end">
 					<Dialog.Close>
 						<Button type="button" variant="soft" color="gray">

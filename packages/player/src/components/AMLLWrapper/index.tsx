@@ -1,88 +1,37 @@
 import {
-	CanvasLyricPlayer,
-	DomLyricPlayer,
-	LyricPlayer,
-	MeshGradientRenderer,
-	PixiRenderer,
-} from "@applemusic-like-lyrics/core";
-import {
-	PrebuiltLyricPlayer,
 	isLyricPageOpenedAtom,
-	lyricBackgroundRendererAtom,
-	lyricPlayerImplementationAtom as lyricPlayerImplementationConstructorAtom,
+	musicIdAtom,
+	PrebuiltLyricPlayer,
 } from "@applemusic-like-lyrics/react-full";
 import { ContextMenu } from "@radix-ui/themes";
 import classnames from "classnames";
-import { useAtomValue, useSetAtom } from "jotai";
+import { useAtomValue } from "jotai";
 import { type FC, useLayoutEffect } from "react";
-import {
-	LyricPlayerImplementation,
-	backgroundRendererAtom,
-	lyricPlayerImplementationAtom,
-} from "../../states/index.ts";
+
 import { AMLLContextMenuContent } from "../AMLLContextMenu/index.tsx";
 import { AudioQualityDialog } from "../AudioQualityDialog/index.tsx";
 import styles from "./index.module.css";
+import { RecordPanel } from "../RecordPanel/index.tsx";
 
 export const AMLLWrapper: FC = () => {
 	const isLyricPageOpened = useAtomValue(isLyricPageOpenedAtom);
-	const backgroundRenderer = useAtomValue(backgroundRendererAtom);
-	const lyricPlayerImplementation = useAtomValue(lyricPlayerImplementationAtom);
-	const setBackgroundRenderer = useSetAtom(lyricBackgroundRendererAtom);
-	const setLyricPlayerImplementation = useSetAtom(
-		lyricPlayerImplementationConstructorAtom,
-	);
+	const musicId = useAtomValue(musicIdAtom);
 
 	useLayoutEffect(() => {
 		if (isLyricPageOpened) {
 			document.body.dataset.amllLyricsOpen = "";
-			setSystemTitlebarImmersiveMode(true);
 		} else {
 			delete document.body.dataset.amllLyricsOpen;
-			setSystemTitlebarImmersiveMode(false);
 		}
 	}, [isLyricPageOpened]);
-
-	useLayoutEffect(() => {
-		switch (backgroundRenderer) {
-			case "pixi":
-				setBackgroundRenderer({
-					renderer: PixiRenderer,
-				});
-				break;
-			default:
-				setBackgroundRenderer({
-					renderer: MeshGradientRenderer,
-				});
-				break;
-		}
-	}, [backgroundRenderer, setBackgroundRenderer]);
-
-	useLayoutEffect(() => {
-		switch (lyricPlayerImplementation) {
-			case LyricPlayerImplementation.Dom:
-				setLyricPlayerImplementation({
-					lyricPlayer: DomLyricPlayer,
-				});
-				break;
-			case LyricPlayerImplementation.Canvas:
-				setLyricPlayerImplementation({
-					lyricPlayer: CanvasLyricPlayer,
-				});
-				break;
-			default:
-				setLyricPlayerImplementation({
-					lyricPlayer: LyricPlayer,
-				});
-				break;
-		}
-	}, [lyricPlayerImplementation, setLyricPlayerImplementation]);
 
 	return (
 		<>
 			<ContextMenu.Root>
 				<ContextMenu.Trigger>
 					<PrebuiltLyricPlayer
+						key={musicId}
+						id="amll-lyric-player"
 						className={classnames(
 							styles.lyricPage,
 							isLyricPageOpened && styles.opened,
@@ -92,6 +41,7 @@ export const AMLLWrapper: FC = () => {
 				<AMLLContextMenuContent />
 			</ContextMenu.Root>
 			<AudioQualityDialog />
+			<RecordPanel />
 		</>
 	);
 };

@@ -14,16 +14,13 @@ import { path } from "@tauri-apps/api";
 import { BaseDirectory } from "@tauri-apps/api/path";
 import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import { copyFile, mkdir, remove, rename } from "@tauri-apps/plugin-fs";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { platform } from "@tauri-apps/plugin-os";
-import { open as shellOpen } from "@tauri-apps/plugin-shell";
 import { atom, useAtomValue, useStore } from "jotai";
 import type { FC } from "react";
 import { Trans, useTranslation } from "react-i18next";
-import {
-	ExtensionLoadResult,
-	extensionDirAtom,
-	extensionMetaAtom,
-} from "../../states/extension.ts";
+import { extensionDirAtom, extensionMetaAtom } from "../../states/extension.ts";
+import { ExtensionLoadResult } from "../../states/extensionsAtoms.ts";
 import { restartApp } from "../../utils/player.ts";
 
 const requireRestartAtom = atom(false);
@@ -114,7 +111,7 @@ export const ExtensionTab: FC = () => {
 						await mkdir(extensionDir, {
 							recursive: true,
 						});
-						await shellOpen(extensionDir);
+						await revealItemInDir(extensionDir);
 					}}
 				>
 					<Trans i18nKey="settings.extension.openPluginDirectory">
@@ -141,13 +138,17 @@ export const ExtensionTab: FC = () => {
 						/>
 						{meta.loadResult === ExtensionLoadResult.Loadable && (
 							<Flex flexGrow="1" direction="column" justify="center">
-								<Text weight="bold">{t("name", meta.id, { ns: meta.id })}</Text>
+								<Text weight="bold">
+									{t("name", meta.id, { ns: meta.id as any })}
+								</Text>
 								<Text size="2">{meta.id}</Text>
 							</Flex>
 						)}
 						{meta.loadResult === ExtensionLoadResult.Disabled && (
 							<Flex flexGrow="1" direction="column" justify="center">
-								<Text weight="bold">{t("name", meta.id, { ns: meta.id })}</Text>
+								<Text weight="bold">
+									{t("name", meta.id, { ns: meta.id as any })}
+								</Text>
 								<Text size="2">{meta.id}</Text>
 							</Flex>
 						)}

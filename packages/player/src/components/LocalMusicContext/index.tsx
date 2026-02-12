@@ -10,19 +10,25 @@ import {
 } from "@applemusic-like-lyrics/lyric";
 import {
 	AudioQualityType,
+	currentPlaylistAtom,
+	currentPlaylistMusicIndexAtom,
 	fftDataAtom,
+	fftDataRangeAtom,
 	hideLyricViewAtom,
 	isLyricPageOpenedAtom,
 	lowFreqVolumeAtom,
+	type MusicQualityState,
 	musicAlbumNameAtom,
 	musicArtistsAtom,
 	musicCoverAtom,
 	musicCoverIsVideoAtom,
 	musicDurationAtom,
+	musicIdAtom,
 	musicLyricLinesAtom,
 	musicNameAtom,
 	musicPlayingAtom,
 	musicPlayingPositionAtom,
+	musicQualityAtom,
 	musicQualityTagAtom,
 	musicVolumeAtom,
 	onChangeVolumeAtom,
@@ -38,31 +44,29 @@ import {
 } from "@applemusic-like-lyrics/react-full";
 import chalk from "chalk";
 import { useLiveQuery } from "dexie-react-hooks";
-import { useAtomValue, useSetAtom, useStore } from "jotai";
-import { type FC, useEffect, useLayoutEffect } from "react";
+import { useAtom, useAtomValue, useSetAtom, useStore } from "jotai";
+import md5 from "md5";
+import { type FC, useEffect, useLayoutEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "react-toastify";
 import { db } from "../../dexie.ts";
 import {
 	advanceLyricDynamicLyricTimeAtom,
-	currentPlaylistAtom,
-	currentPlaylistMusicIndexAtom,
-	fftDataRangeAtom,
-	musicIdAtom,
-	musicQualityAtom,
-} from "../../states/index.ts";
+	enableMediaControlsAtom,
+} from "../../states/appAtoms.ts";
 import {
-	type AudioInfo,
 	type AudioQuality,
 	emitAudioThread,
 	emitAudioThreadRet,
+	initAudioThread,
 	listenAudioThreadEvent,
+	type SongData,
 } from "../../utils/player.ts";
 
-const FFTToLowPassContext: FC = () => {
+export const FFTToLowPassContext: FC = () => {
 	const store = useStore();
 	const fftDataRange = useAtomValue(fftDataRangeAtom);
-	const isLyricPageOpened = useAtomValue(isLyricPageOpenedAtom);
+	// const isLyricPageOpened = useAtomValue(isLyricPageOpenedAtom);
 
 	useEffect(() => {
 		emitAudioThread("setFFTRange", {
@@ -72,7 +76,7 @@ const FFTToLowPassContext: FC = () => {
 	}, [fftDataRange]);
 
 	useEffect(() => {
-		if (!isLyricPageOpened) return;
+		// if (!isLyricPageOpened) return;
 		let rafId: number;
 		let curValue = 1;
 		let lt = 0;
@@ -136,7 +140,8 @@ const FFTToLowPassContext: FC = () => {
 		return () => {
 			cancelAnimationFrame(rafId);
 		};
-	}, [store, isLyricPageOpened]);
+	}, [store]);
+	// }, [store, isLyricPageOpened]);
 
 	return null;
 };
@@ -168,7 +173,7 @@ function pairLyric(line: LyricLine, lines: CoreLyricLine[], key: TransLine) {
 			.trim(),
 		original: v,
 	}));
-	let nearestLine: PairedLine | undefined = undefined;
+	let nearestLine: PairedLine | undefined;
 	for (const coreLine of processed) {
 		if (coreLine.lineText.length > 0) {
 			if (coreLine.startTime === line.words[0].startTime) {
@@ -196,31 +201,37 @@ function pairLyric(line: LyricLine, lines: CoreLyricLine[], key: TransLine) {
 
 const MusicQualityTagText: FC = () => {
 	const { t } = useTranslation();
-	const musicQuality = useAtomValue(musicQualityAtom);
+	const musicQuality = useAtomValue<MusicQualityState>(musicQualityAtom);
 	const setMusicQualityTag = useSetAtom(musicQualityTagAtom);
 
 	useLayoutEffect(() => {
 		switch (musicQuality.type) {
 			case AudioQualityType.None:
 				return setMusicQualityTag(null);
+
 			case AudioQualityType.Lossless:
 				return setMusicQualityTag({
 					tagIcon: true,
 					tagText: t("amll.qualityTag.lossless", "无损"),
 					isDolbyAtmos: false,
 				});
-			case AudioQualityType.HiRes:
+
+			case AudioQualityType.HiResLossless:
 				return setMusicQualityTag({
 					tagIcon: true,
 					tagText: t("amll.qualityTag.hires", "高解析度无损"),
 					isDolbyAtmos: false,
 				});
+
 			case AudioQualityType.DolbyAtmos:
 				return setMusicQualityTag({
 					tagIcon: false,
 					tagText: "",
 					isDolbyAtmos: true,
 				});
+
+			default:
+				return setMusicQualityTag(null);
 		}
 	}, [t, musicQuality, setMusicQualityTag]);
 
@@ -228,6 +239,13 @@ const MusicQualityTagText: FC = () => {
 };
 const TTML_LOG_TAG = chalk.bgHex("#FF5577").hex("#FFFFFF")(" TTML DB ");
 const LYRIC_LOG_TAG = chalk.bgHex("#FF4444").hex("#FFFFFF")(" LYRIC ");
+
+interface GitHubContent {
+	name: string;
+	path: string;
+	type: "file" | "dir";
+	sha: string;
+}
 
 const LyricContext: FC = () => {
 	const musicId = useAtomValue(musicIdAtom);
@@ -245,7 +263,7 @@ const LyricContext: FC = () => {
 
 		(async () => {
 			const fileListRes = await fetch(
-				"https://api.github.com/repos/Steve-xmh/amll-ttml-db/contents/raw-lyrics",
+				"https://api.github.com/repos/Steve-xmh/amll-ttml-db/contents",
 				{
 					signal: sig.signal,
 					redirect: "follow",
@@ -255,18 +273,58 @@ const LyricContext: FC = () => {
 			if (fileListRes.status < 200 || fileListRes.status > 399) {
 				console.warn(
 					TTML_LOG_TAG,
-					"TTML DB 歌词库同步失败",
+					"TTML DB 歌词库同步失败：获取根目录文件列表失败",
 					fileListRes.status,
 					fileListRes.statusText,
 				);
 				return;
 			}
 
-			const fileList = await fileListRes.json();
-			const fileMap = Object.fromEntries(fileList.map((v) => [v.name, v]));
+			const fileList: GitHubContent[] = await fileListRes.json();
+			const rawLyricsEntry = fileList.find(
+				(v) => v.name === "raw-lyrics" && v.type === "dir",
+			);
+
+			if (!rawLyricsEntry) {
+				console.warn(TTML_LOG_TAG, "未找到 raw-lyrics 目录");
+				return;
+			}
+			console.log(
+				TTML_LOG_TAG,
+				"raw-lyric 目录已找到，SHA 为",
+				rawLyricsEntry.sha,
+			);
+
+			const lyricFileListRes = await fetch(
+				`https://api.github.com/repos/Steve-xmh/amll-ttml-db/git/trees/${rawLyricsEntry.sha}`,
+				{
+					signal: sig.signal,
+					redirect: "follow",
+				},
+			);
+
+			if (lyricFileListRes.status < 200 || lyricFileListRes.status > 399) {
+				console.warn(
+					TTML_LOG_TAG,
+					"TTML DB 歌词库同步失败：获取 raw-lyrics 文件夹下的文件列表失败",
+					lyricFileListRes.status,
+					lyricFileListRes.statusText,
+				);
+				return;
+			}
+
+			const lyricFileList: { tree: GitHubContent[] } =
+				await lyricFileListRes.json();
+
+			const fileMap = Object.fromEntries(
+				lyricFileList.tree.map((v) => [v.path, v]),
+			);
+			console.log(fileMap);
 
 			const localFileList = new Set<string>();
-			const remoteFileList = new Set<string>(fileList.map((v) => v.name));
+			const remoteFileList = new Set<string>(
+				lyricFileList.tree.map((v) => v.path),
+			);
 
 			await db.ttmlDB.each((obj) => {
 				localFileList.add(obj.name);
@@ -277,46 +335,62 @@ const LyricContext: FC = () => {
 
 			const shouldFetchList = remoteFileList.difference(localFileList);
 
-			console.log(TTML_LOG_TAG, "需要下载的歌词数量", shouldFetchList.size);
+			console.log(
+				TTML_LOG_TAG,
+				"需要下载的歌词数量",
+				shouldFetchList.size,
+				shouldFetchList,
+			);
 
 			let synced = 0;
 			let errored = 0;
 
-			await Promise.all(
-				shouldFetchList.keys().map(async (fileName: string) => {
-					const lyricRes = await fetch(fileMap[fileName].download_url, {
-						signal: sig.signal,
-						redirect: "follow",
-					});
+			const fetchTasks = [];
 
-					if (fileListRes.status < 200 || fileListRes.status > 399) {
-						console.warn(
-							"同步歌词文件",
-							fileName,
-							"失败",
-							fileListRes.status,
-							fileListRes.statusText,
+			// Safari 目前不支持对迭代器对象使用 map 方法
+			for (const fileName of shouldFetchList.keys()) {
+				if (!(fileName in fileMap)) continue;
+				fetchTasks.push(
+					(async () => {
+						const lyricRes = await fetch(
+							`https://raw.githubusercontent.com/Steve-xmh/amll-ttml-db/main/raw-lyrics/${fileMap[fileName].path}`,
+							{
+								signal: sig.signal,
+								redirect: "follow",
+							},
 						);
-						errored++;
-						return;
-					}
 
-					const lyricContent = await lyricRes.text();
+						if (fileListRes.status < 200 || fileListRes.status > 399) {
+							console.warn(
+								"同步歌词文件",
+								fileName,
+								"失败",
+								fileListRes.status,
+								fileListRes.statusText,
+							);
+							errored++;
+							return;
+						}
 
-					try {
-						const ttml = parseTTML(lyricContent);
-						db.ttmlDB.add({
-							name: fileName,
-							content: ttml,
-							raw: lyricContent,
-						});
-						synced++;
-					} catch (err) {
-						console.warn("下载并解析歌词文件", fileName, "失败", err);
-						errored++;
-					}
-				}),
-			);
+						const lyricContent = await lyricRes.text();
+
+						try {
+							const ttml = parseTTML(lyricContent);
+							db.ttmlDB.add({
+								name: fileName,
+								content: ttml,
+								raw: lyricContent,
+							});
+							synced++;
+						} catch (err) {
+							console.warn("下载并解析歌词文件", fileName, "失败", err);
+							errored++;
+						}
+					})(),
+				);
+			}
+
+			await Promise.all(fetchTasks);
 
 			console.log(
 				TTML_LOG_TAG,
@@ -378,11 +452,30 @@ const LyricContext: FC = () => {
 						return;
 					}
 				}
+				const compatibleLyricLines: CoreLyricLine[] = parsedLyricLines.map(
+					(line) => ({
+						...line,
+						words: line.words.map((word) => ({
+							...word,
+							obscene: false,
+						})),
+					}),
+				);
 				if (song.translatedLrc) {
 					try {
 						const translatedLyricLines = parseLrc(song.translatedLrc);
 						for (const line of translatedLyricLines) {
-							pairLyric(line, parsedLyricLines, "translatedLyric");
+							pairLyric(
+								{
+									...line,
+									words: line.words.map((word) => ({
+										...word,
+										obscene: false,
+									})),
+								},
+								compatibleLyricLines,
+								"translatedLyric",
+							);
 						}
 						console.log(LYRIC_LOG_TAG, "已匹配翻译歌词");
 					} catch (err) {
@@ -393,21 +486,32 @@ const LyricContext: FC = () => {
 					try {
 						const romanLyricLines = parseLrc(song.romanLrc);
 						for (const line of romanLyricLines) {
-							pairLyric(line, parsedLyricLines, "romanLyric");
+							pairLyric(
+								{
+									...line,
+									words: line.words.map((word) => ({
+										...word,
+										obscene: false,
+									})),
+								},
+								compatibleLyricLines,
+								"romanLyric",
+							);
 						}
 						console.log(LYRIC_LOG_TAG, "已匹配音译歌词");
 					} catch (err) {
 						console.warn(LYRIC_LOG_TAG, "解析音译歌词时出现错误", err);
 					}
 				}
+				const processedLines: CoreLyricLine[] = compatibleLyricLines;
 				if (advanceLyricDynamicLyricTime) {
-					for (const line of parsedLyricLines) {
+					for (const line of processedLines) {
 						line.startTime = Math.max(0, line.startTime - 400);
 						line.endTime = Math.max(0, line.endTime - 400);
 					}
 				}
-				setLyricLines(parsedLyricLines);
-				setHideLyricView(parsedLyricLines.length === 0);
+				setLyricLines(processedLines);
+				setHideLyricView(processedLines.length === 0);
 			} catch (e) {
 				console.warn("解析歌词时出现错误", e);
 				setLyricLines([]);
@@ -425,19 +529,143 @@ const LyricContext: FC = () => {
 export const LocalMusicContext: FC = () => {
 	const store = useStore();
 	const { t } = useTranslation();
+	const firstPlay = useRef(true);
+	const [musicPlaying, setMusicPlaying] = useAtom(musicPlayingAtom);
+
+	const syncMusicInfo = async (data: any) => {
+		if (!data || !data.musicInfo) {
+			console.error("[syncMusicInfo] Invalid data, aborting.");
+			return;
+		}
+
+		const musicId = data.musicId.startsWith("local:")
+			? data.musicId.substring(6)
+			: data.musicId;
+
+		try {
+			store.set(musicIdAtom, musicId);
+
+			const songFromDb = await db.songs.get(musicId);
+
+			if (songFromDb) {
+				store.set(musicNameAtom, songFromDb.songName);
+				store.set(musicAlbumNameAtom, songFromDb.songAlbum);
+				store.set(
+					musicArtistsAtom,
+					songFromDb.songArtists.split("/").map((v) => ({
+						id: v.trim(),
+						name: v.trim(),
+					})),
+				);
+
+				const oldUrl = store.get(musicCoverAtom);
+				if (oldUrl?.startsWith("blob:")) {
+					URL.revokeObjectURL(oldUrl);
+				}
+				const imgUrl = URL.createObjectURL(songFromDb.cover);
+				store.set(musicCoverAtom, imgUrl);
+				store.set(
+					musicCoverIsVideoAtom,
+					songFromDb.cover.type.startsWith("video"),
+				);
+			} else {
+				store.set(musicNameAtom, data.musicInfo.name);
+				store.set(musicAlbumNameAtom, data.musicInfo.album);
+				store.set(
+					musicArtistsAtom,
+					data.musicInfo.artist.split("/").map((v: string) => ({
+						id: v.trim(),
+						name: v.trim(),
+					})),
+				);
+
+				const oldUrl = store.get(musicCoverAtom);
+				if (oldUrl?.startsWith("blob:")) {
+					URL.revokeObjectURL(oldUrl);
+				}
+
+				if (data.musicInfo.cover && data.musicInfo.cover.length > 0) {
+					const blob = new Blob([new Uint8Array(data.musicInfo.cover)], {
+						type: data.musicInfo.coverMediaType || "image/jpeg",
+					});
+					const url = URL.createObjectURL(blob);
+					store.set(musicCoverAtom, url);
+					store.set(musicCoverIsVideoAtom, false);
+				} else {
+					store.set(
+						musicCoverAtom,
+						"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
+					);
+					store.set(musicCoverIsVideoAtom, false);
+				}
+			}
+			store.set(musicDurationAtom, (data.duration * 1000) | 0);
+		} catch (error) {
+			console.error(
+				"[syncMusicInfo] An error occurred during state update:",
+				error,
+			);
+		}
+	};
 
 	useEffect(() => {
+		if (musicPlaying && firstPlay.current) {
+			firstPlay.current = false;
+			const mediaControlsEnabled = store.get(enableMediaControlsAtom);
+			if (mediaControlsEnabled) {
+				emitAudioThread("setMediaControlsEnabled", { enabled: true });
+			}
+		}
+	}, [musicPlaying, store]);
+
+	const processAndSetPlaylist = async (playlistData: SongData[]) => {
+		if (!playlistData || playlistData.length === 0) {
+			store.set(currentPlaylistAtom, []);
+			return;
+		}
+
+		const fullPlaylistPromises = playlistData.map(
+			async (songData): Promise<SongData> => {
+				if (songData.type === "local") {
+					const songId = md5(songData.filePath);
+					const songInfoFromDb = await db.songs.get(songId);
+
+					if (songInfoFromDb) {
+						return {
+							type: "custom",
+							id: songInfoFromDb.id,
+							songJsonData: JSON.stringify(songInfoFromDb),
+							origOrder: songData.origOrder,
+						};
+					}
+				}
+				return songData;
+			},
+		);
+
+		const fullPlaylist: SongData[] = await Promise.all(fullPlaylistPromises);
+		store.set(currentPlaylistAtom, fullPlaylist);
+	};
+
+	useEffect(() => {
+		initAudioThread();
+
 		const toEmitThread = (type: Parameters<typeof emitAudioThread>[0]) => ({
 			onEmit() {
 				emitAudioThread(type);
 			},
 		});
-		const toEmit = <T,>(onEmit: T) => ({
-			onEmit,
-		});
+		const toEmit = <T,>(onEmit: T) => ({ onEmit });
+
+		store.set(
+			onPlayOrResumeAtom,
+			toEmit(() => {
+				emitAudioThread("resumeOrPauseAudio");
+			}),
+		);
+
 		store.set(onRequestNextSongAtom, toEmitThread("nextSong"));
 		store.set(onRequestPrevSongAtom, toEmitThread("prevSong"));
-		store.set(onPlayOrResumeAtom, toEmitThread("resumeOrPauseAudio"));
 		store.set(
 			onClickControlThumbAtom,
 			toEmit(() => {
@@ -492,98 +720,8 @@ export const LocalMusicContext: FC = () => {
 				);
 			}),
 		);
-		const syncMusicInfo = (
-			musicInfo: AudioInfo,
-			musicId = store.get(musicIdAtom),
-		) => {
-			store.set(musicNameAtom, musicInfo.name);
-			store.set(musicAlbumNameAtom, musicInfo.album);
-			store.set(
-				musicArtistsAtom,
-				musicInfo.artist.split("/").map((v) => ({
-					id: v.trim(),
-					name: v.trim(),
-				})),
-			);
-			store.set(musicPlayingPositionAtom, (musicInfo.position * 1000) | 0);
-			store.set(musicDurationAtom, (musicInfo.duration * 1000) | 0);
 
-			db.songs.get(musicId).then((song) => {
-				if (song) {
-					store.set(musicNameAtom, song.songName);
-					store.set(musicAlbumNameAtom, song.songAlbum);
-					store.set(
-						musicArtistsAtom,
-						song.songArtists.split("/").map((v) => ({
-							id: v.trim(),
-							name: v.trim(),
-						})),
-					);
-
-					const imgUrl = URL.createObjectURL(song.cover);
-					try {
-						const oldUrl = store.get(musicCoverAtom);
-						if (oldUrl.startsWith("blob:")) {
-							URL.revokeObjectURL(oldUrl);
-						}
-					} catch (e) {
-						console.warn(e);
-					}
-					store.set(musicCoverAtom, imgUrl);
-					store.set(musicCoverIsVideoAtom, song.cover.type.startsWith("video"));
-				} else if (musicInfo.cover) {
-					const imgBlob = new Blob([new Uint8Array(musicInfo.cover)], {
-						type: "image",
-					});
-					const imgUrl = URL.createObjectURL(imgBlob);
-					try {
-						const oldUrl = store.get(musicCoverAtom);
-						if (oldUrl.startsWith("blob:")) {
-							URL.revokeObjectURL(oldUrl);
-						}
-					} catch (e) {
-						console.warn(e);
-					}
-					store.set(musicCoverAtom, imgUrl);
-					store.set(musicCoverIsVideoAtom, false);
-				} else {
-					store.set(
-						musicCoverAtom,
-						"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7",
-					);
-					store.set(musicCoverIsVideoAtom, false);
-				}
-			});
-		};
-		const syncMusicId = (musicId: string) => {
-			if (musicId.startsWith("local:")) {
-				store.set(musicIdAtom, musicId.substring(6));
-			} else {
-				store.set(musicIdAtom, musicId);
-			}
-		};
-		const syncMusicQuality = (quality: AudioQuality) => {
-			let result = AudioQualityType.None;
-			const LOSSLESS_CODECS = new Set(["flac", "alac"]);
-			const codec = quality.codec ?? "unknown";
-			if (LOSSLESS_CODECS.has(codec) || codec.startsWith("pcm_")) {
-				result = AudioQualityType.Lossless;
-				if ((quality.sampleRate || 0) > 48000) {
-					result = AudioQualityType.HiRes;
-				}
-			}
-			if ((quality.channels || 0) > 2) {
-				result = AudioQualityType.DolbyAtmos;
-			}
-			store.set(musicQualityAtom, {
-				type: result,
-				codec: quality.codec ?? "unknown",
-				channels: quality.channels ?? Number.NaN,
-				sampleRate: quality.sampleRate ?? Number.NaN,
-				sampleFormat: quality.sampleFormat ?? "unknown",
-			});
-		};
-		const unlistenPromise = listenAudioThreadEvent((evt) => {
+		const unlistenPromise = listenAudioThreadEvent(async (evt) => {
 			const evtData = evt.payload.data;
 			switch (evtData?.type) {
 				case "playPosition": {
@@ -593,58 +731,34 @@ export const LocalMusicContext: FC = () => {
 					);
 					break;
 				}
-				case "loadProgress": {
-					break;
-				}
-				case "loadAudio": {
-					syncMusicId(evtData.data.musicId);
-					syncMusicQuality(evtData.data.quality);
-					syncMusicInfo(evtData.data.musicInfo);
-					store.set(
-						currentPlaylistMusicIndexAtom,
-						evtData.data.currentPlayIndex,
-					);
-					break;
-				}
-				case "loadingAudio": {
-					syncMusicId(evtData.data.musicId);
-					store.set(
-						currentPlaylistMusicIndexAtom,
-						evtData.data.currentPlayIndex,
-					);
-					break;
-				}
+
 				case "syncStatus": {
-					store.set(musicPlayingAtom, evtData.data.isPlaying);
-					store.set(musicVolumeAtom, evtData.data.volume);
-					syncMusicId(evtData.data.musicId);
-					syncMusicQuality(evtData.data.quality);
-					syncMusicInfo(evtData.data.musicInfo);
-					store.set(currentPlaylistAtom, evtData.data.playlist);
-					store.set(
-						currentPlaylistMusicIndexAtom,
-						evtData.data.currentPlayIndex,
-					);
+					const status = evtData.data;
+					setMusicPlaying(status.isPlaying);
+					store.set(musicVolumeAtom, status.volume);
+					store.set(currentPlaylistMusicIndexAtom, status.currentPlayIndex);
+
+					if (status.quality) {
+						const newQualityState = processAudioQuality(status.quality);
+						store.set(musicQualityAtom, newQualityState);
+					}
+
+					await processAndSetPlaylist(status.playlist);
+
+					const currentMusicId = store.get(musicIdAtom);
+					const newMusicId = status.musicId.startsWith("local:")
+						? status.musicId.substring(6)
+						: status.musicId;
+					if (newMusicId && newMusicId !== currentMusicId) {
+						await syncMusicInfo(status);
+					}
+
+					store.set(musicDurationAtom, (status.duration * 1000) | 0);
+					store.set(musicPlayingPositionAtom, (status.position * 1000) | 0);
 					break;
 				}
-				case "playListChanged": {
-					store.set(currentPlaylistAtom, evtData.data.playlist);
-					store.set(
-						currentPlaylistMusicIndexAtom,
-						evtData.data.currentPlayIndex,
-					);
-					break;
-				}
-				case "playStatus": {
-					store.set(musicPlayingAtom, evtData.data.isPlaying);
-					break;
-				}
-				case "setDuration": {
-					store.set(musicDurationAtom, evtData.data.duration);
-					break;
-				}
+
 				case "loadError": {
-					// toast.error(`播放后端加载音频失败\n${evtData.data.error}`, {});
 					toast.error(
 						t("amll.loadAudioError", "播放后端加载音频失败\n{error}", {
 							error: evtData.data.error,
@@ -653,10 +767,12 @@ export const LocalMusicContext: FC = () => {
 					);
 					break;
 				}
+
 				case "volumeChanged": {
 					store.set(musicVolumeAtom, evtData.data.volume);
 					break;
 				}
+
 				case "fftData": {
 					store.set(fftDataAtom, evtData.data.data);
 					break;
@@ -664,8 +780,21 @@ export const LocalMusicContext: FC = () => {
 			}
 		});
 		emitAudioThreadRet("syncStatus");
+
 		return () => {
 			unlistenPromise.then((unlisten) => unlisten());
+
+			const doNothing = toEmit(() => {});
+			store.set(onRequestNextSongAtom, doNothing);
+			store.set(onRequestPrevSongAtom, doNothing);
+			store.set(onPlayOrResumeAtom, doNothing);
+			store.set(onClickControlThumbAtom, doNothing);
+			store.set(onSeekPositionAtom, doNothing);
+			store.set(onLyricLineClickAtom, doNothing);
+			store.set(onChangeVolumeAtom, doNothing);
+			store.set(onRequestOpenMenuAtom, doNothing);
+			store.set(onClickLeftFunctionButtonAtom, doNothing);
+			store.set(onClickRightFunctionButtonAtom, doNothing);
 		};
 	}, [store, t]);
 
@@ -677,3 +806,48 @@ export const LocalMusicContext: FC = () => {
 		</>
 	);
 };
+
+function processAudioQuality(
+	quality: AudioQuality | undefined,
+): MusicQualityState {
+	const definiteQuality = {
+		sampleRate: quality?.sampleRate ?? 0,
+		bitsPerCodedSample: quality?.bitsPerCodedSample ?? 0,
+		bitsPerSample: quality?.bitsPerSample ?? 0,
+		channels: quality?.channels ?? 0,
+		sampleFormat: quality?.sampleFormat ?? "unknown",
+		codec: quality?.codec ?? "unknown",
+	};
+
+	if (definiteQuality.codec === "unknown") {
+		return {
+			...definiteQuality,
+			type: AudioQualityType.None,
+		};
+	}
+
+	const isLosslessCodec = ["flac", "alac", "ape", "wav", "aiff"].includes(
+		definiteQuality.codec.toLowerCase(),
+	);
+
+	if (isLosslessCodec) {
+		const sampleRate = definiteQuality.sampleRate;
+		const bitsPerSample = definiteQuality.bitsPerSample;
+
+		if (sampleRate >= 96000 && bitsPerSample >= 24) {
+			return {
+				...definiteQuality,
+				type: AudioQualityType.HiResLossless,
+			};
+		}
+		return {
+			...definiteQuality,
+			type: AudioQualityType.Lossless,
+		};
+	}
+
+	return {
+		...definiteQuality,
+		type: AudioQualityType.None,
+	};
+}

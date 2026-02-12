@@ -113,11 +113,11 @@ export const BackgroundRender = forwardRef<
 		},
 		ref,
 	) => {
-		const coreBGRenderRef = useRef<AbstractBaseRenderer>();
+		const coreBGRenderRef = useRef<AbstractBaseRenderer>(null);
 		const wrapperRef = useRef<HTMLDivElement>(null);
 		const lastRendererRef = useRef<{
 			new (canvas: HTMLCanvasElement): BaseRenderer;
-		}>();
+		}>(null);
 		const curRenderer = renderer ?? MeshGradientRenderer;
 
 		useEffect(() => {
@@ -182,6 +182,9 @@ export const BackgroundRender = forwardRef<
 				const el = coreBGRenderRef.current.getElement();
 				el.style.width = "100%";
 				el.style.height = "100%";
+				el.style.minHeight = "0";
+				el.style.minWidth = "0";
+				el.style.overflow = "hidden";
 				wrapperRef.current?.appendChild(el);
 			}
 		}, [coreBGRenderRef.current]);
@@ -191,7 +194,7 @@ export const BackgroundRender = forwardRef<
 			ref,
 			() => ({
 				wrapperEl: wrapperRef.current,
-				bgRender: coreBGRenderRef.current,
+				bgRender: coreBGRenderRef.current!,
 			}),
 			[wrapperRef.current, coreBGRenderRef.current],
 		);
