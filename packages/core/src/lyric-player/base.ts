@@ -491,35 +491,52 @@ export abstract class LyricPlayerBase
 		| [number, number, number, boolean]
 		| undefined {
 		const currentTime = this.currentTime + 20;
-		const currentIndex = this.scrollToIndex;
 		const lines = this.processedLines;
+		if (lines.length === 0) return undefined;
+
+		// 间奏判定仅基于“主歌词行”之间的间隙，避免被 BG 行索引扰乱。
+		const mainIndexes: number[] = [];
+		for (let i = 0; i < lines.length; i++) {
+			if (!lines[i].isBG) mainIndexes.push(i);
+		}
+		if (mainIndexes.length === 0) return undefined;
 
 		const checkGap = (
-			k: number,
+			prevBoundaryIndex: number,
+			nextMainIndex: number,
 		): [number, number, number, boolean] | undefined => {
-			if (k < -1 || k >= lines.length - 1) return undefined;
+			const nextLine = lines[nextMainIndex];
+			if (!nextLine) return undefined;
 
-			const prevLine = k === -1 ? null : lines[k];
-			const nextLine = lines[k + 1];
-
-			const gapStart = prevLine ? prevLine.endTime : 0;
+			const gapStart =
+				prevBoundaryIndex >= 0 ? lines[prevBoundaryIndex].endTime : 0;
 			const gapEnd = Math.max(gapStart, nextLine.startTime - 250);
-
-			if (gapEnd - gapStart < 4000) {
-				return undefined;
-			}
+			if (gapEnd - gapStart < 4000) return undefined;
 
 			if (gapEnd > currentTime && gapStart < currentTime) {
-				return [Math.max(gapStart, currentTime), gapEnd, k, nextLine.isDuet];
+				return [
+					Math.max(gapStart, currentTime),
+					gapEnd,
+					prevBoundaryIndex,
+					nextLine.isDuet,
+				];
 			}
 			return undefined;
 		};
 
-		return (
-			checkGap(currentIndex - 1) ||
-			checkGap(currentIndex) ||
-			checkGap(currentIndex + 1)
-		);
+		// 头部空白区（0 -> 第一主行）
+		const leadingGap = checkGap(-1, mainIndexes[0]);
+		if (leadingGap) return leadingGap;
+
+		// 主行分组之间的间隙：
+		// nextMainIndex 前一个索引即上一个主行分组（主行+连续 BG）的末尾。
+		for (let i = 1; i < mainIndexes.length; i++) {
+			const nextMainIndex = mainIndexes[i];
+			const prevBoundaryIndex = nextMainIndex - 1;
+			const gap = checkGap(prevBoundaryIndex, nextMainIndex);
+			if (gap) return gap;
+		}
+		return undefined;
 	}
 	/**
 	 * 设置当前播放歌词，要注意传入后这个数组内的信息不得修改，否则会发生错误
