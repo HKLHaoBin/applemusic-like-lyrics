@@ -57,6 +57,9 @@ export abstract class LyricPlayerBase
 	readonly size: [number, number] = [0, 0];
 	protected allowScroll = true;
 	protected isPageVisible = true;
+	private debugMainLineFirstActivationLogged: Set<number> = new Set();
+	private debugMainLineInRangeLogged: Set<number> = new Set();
+	private debugMainLineMissedActivationLogged: Set<number> = new Set();
 
 	protected initialLayoutFinished = false;
 
@@ -572,9 +575,42 @@ export abstract class LyricPlayerBase
 		this.interludeDots.setInterlude(undefined);
 		this.hotLines.clear();
 		this.bufferedLines.clear();
+		this.debugMainLineFirstActivationLogged.clear();
+		this.debugMainLineInRangeLogged.clear();
+		this.debugMainLineMissedActivationLogged.clear();
 		this.setCurrentTime(0, true);
 
 		if (import.meta.env.DEV) {
+			const debugRows: Array<{
+				mainOrder: number;
+				lineId: number;
+				startTime: number;
+				endTime: number;
+				hasAttachedBg: boolean;
+				text: string;
+			}> = [];
+			let mainOrder = 0;
+			for (let i = 0; i < this.processedLines.length; i++) {
+				const line = this.processedLines[i];
+				if (line.isBG) continue;
+				mainOrder++;
+				if (mainOrder > 18) break;
+				const previewText = line.words
+					.map((w) => w.word)
+					.join("")
+					.replace(/\s+/g, " ")
+					.trim()
+					.slice(0, 80);
+				debugRows.push({
+					mainOrder,
+					lineId: i,
+					startTime: line.startTime,
+					endTime: line.endTime,
+					hasAttachedBg: !!this.processedLines[i + 1]?.isBG,
+					text: previewText,
+				});
+			}
+			console.table(debugRows);
 			console.log("歌词处理完成", this);
 		}
 	}
@@ -639,12 +675,12 @@ export abstract class LyricPlayerBase
 				}
 
 				if (!this.hotLines.has(id)) {
-					this.hotLines.add(id);
-					addedIds.add(id);
+						this.hotLines.add(id);
+						addedIds.add(id);
 
-					if (!isSeek) {
-						lineObj.enable();
-					}
+						if (!isSeek) {
+							lineObj.enable(this.currentTime, this.isPlaying);
+						}
 
 					// 注意：背景行的处理已移到后面的独立逻辑中
 					// 这样可以确保背景行按照自己的时间独立播放动画
@@ -771,16 +807,16 @@ export abstract class LyricPlayerBase
 					const lineObj = this.currentLyricLineObjects[v];
 					if (lineObj) {
 						const line = lineObj.getLine();
-						if (line.isBG) {
-							// 背景行：根据动画状态决定是否播放
-							const shouldAnimate = bgAnimateStates.get(v) ?? false;
-							lineObj.enable(this.currentTime, shouldAnimate && this.isPlaying);
-						} else {
-							// 主行：正常启用
-							lineObj.enable();
+							if (line.isBG) {
+								// 背景行：根据动画状态决定是否播放
+								const shouldAnimate = bgAnimateStates.get(v) ?? false;
+								lineObj.enable(this.currentTime, shouldAnimate && this.isPlaying);
+							} else {
+								// 主行：正常启用
+								lineObj.enable(this.currentTime, this.isPlaying);
+							}
 						}
 					}
-				}
 				this.scrollToIndex = Math.min(...this.bufferedLines);
 				this.calcLayout();
 			} else if (addedIds.size === 0 && removedIds.size > 0) {
@@ -799,16 +835,16 @@ export abstract class LyricPlayerBase
 					const lineObj = this.currentLyricLineObjects[v];
 					if (lineObj) {
 						const line = lineObj.getLine();
-						if (line.isBG) {
-							// 背景行：根据动画状态决定是否播放
-							const shouldAnimate = bgAnimateStates.get(v) ?? false;
-							lineObj.enable(this.currentTime, shouldAnimate && this.isPlaying);
-						} else {
-							// 主行：正常启用
-							lineObj.enable();
+							if (line.isBG) {
+								// 背景行：根据动画状态决定是否播放
+								const shouldAnimate = bgAnimateStates.get(v) ?? false;
+								lineObj.enable(this.currentTime, shouldAnimate && this.isPlaying);
+							} else {
+								// 主行：正常启用
+								lineObj.enable(this.currentTime, this.isPlaying);
+							}
 						}
 					}
-				}
 				for (const v of removedIds) {
 					this.bufferedLines.delete(v);
 					this.currentLyricLineObjects[v]?.disable();
@@ -818,8 +854,91 @@ export abstract class LyricPlayerBase
 				this.calcLayout();
 			}
 		}
-		this.lastCurrentTime = time;
-	}
+			this.lastCurrentTime = time;
+
+			if (import.meta.env.DEV) {
+				const trackedMainIds: number[] = [];
+				for (let i = 0; i < this.processedLines.length; i++) {
+					if (!this.processedLines[i].isBG) {
+						trackedMainIds.push(i);
+						if (trackedMainIds.length >= 18) break;
+					}
+				}
+
+				for (let mainOrder = 0; mainOrder < trackedMainIds.length; mainOrder++) {
+					const lineId = trackedMainIds[mainOrder];
+					const line = this.processedLines[lineId];
+					if (!line) continue;
+
+					const inRange = line.startTime <= time && line.endTime > time;
+					if (inRange && !this.debugMainLineInRangeLogged.has(lineId)) {
+						console.log("[AMLL][Debug][MainLineInRange]", {
+							mainOrder: mainOrder + 1,
+							lineId,
+							time,
+							startTime: line.startTime,
+							endTime: line.endTime,
+							inHotLines: this.hotLines.has(lineId),
+							inBufferedLines: this.bufferedLines.has(lineId),
+							addedNow: addedIds.has(lineId),
+							isSeek,
+						});
+						this.debugMainLineInRangeLogged.add(lineId);
+					}
+
+					if (
+						time >= line.endTime &&
+						!this.debugMainLineFirstActivationLogged.has(lineId) &&
+						!this.debugMainLineMissedActivationLogged.has(lineId)
+					) {
+						console.warn("[AMLL][Debug][MainLineMissedActivation]", {
+							mainOrder: mainOrder + 1,
+							lineId,
+							time,
+							startTime: line.startTime,
+							endTime: line.endTime,
+							lastCurrentTime: this.lastCurrentTime,
+							inHotLines: this.hotLines.has(lineId),
+							inBufferedLines: this.bufferedLines.has(lineId),
+							scrollToIndex: this.scrollToIndex,
+						});
+						this.debugMainLineMissedActivationLogged.add(lineId);
+					}
+				}
+
+				for (const id of addedIds) {
+					const line = this.processedLines[id];
+					if (!line || line.isBG) continue;
+					if (this.debugMainLineFirstActivationLogged.has(id)) continue;
+
+					const mainOrder =
+						this.processedLines
+							.slice(0, id + 1)
+							.filter((v) => !v.isBG).length;
+					if (mainOrder > 12) continue;
+
+					const previewText = line.words
+						.map((w) => w.word)
+						.join("")
+						.replace(/\s+/g, " ")
+						.trim()
+						.slice(0, 80);
+
+					console.log("[AMLL][Activation][MainLine]", {
+						mainOrder,
+						lineId: id,
+						activatedAt: time,
+						startTime: line.startTime,
+						endTime: line.endTime,
+						scrollToIndex: this.scrollToIndex,
+						isSeek,
+						text: previewText,
+					});
+
+					this.debugMainLineFirstActivationLogged.add(id);
+				}
+			}
+		}
 
 	/**
 	 * 重新布局定位歌词行的位置，调用完成后再逐帧调用 `update`

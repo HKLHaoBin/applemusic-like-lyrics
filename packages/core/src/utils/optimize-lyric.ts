@@ -5,13 +5,24 @@ import type { LyricLine } from "../interfaces.ts";
  */
 function resetLineTimestamps(lines: LyricLine[]) {
 	for (const line of lines) {
-		if (line.words.length > 0) {
-			const firstWord = line.words[0];
-			const lastWord = line.words[line.words.length - 1];
+		if (line.words.length === 0) continue;
 
-			line.startTime = firstWord.startTime;
-			line.endTime = lastWord.endTime;
-		}
+		// 忽略由 TTML 缩进/换行产生的空白文本词（通常 start/end 为 0），
+		// 否则会把主行 endTime 错算成 0，导致该行永远无法进入激活区间。
+		const timedWords = line.words.filter(
+			(word) =>
+				word.word.trim().length > 0 &&
+				Number.isFinite(word.startTime) &&
+				Number.isFinite(word.endTime) &&
+				word.endTime > word.startTime,
+		);
+
+		if (timedWords.length === 0) continue;
+
+		const firstWord = timedWords[0];
+		const lastWord = timedWords[timedWords.length - 1];
+		line.startTime = firstWord.startTime;
+		line.endTime = lastWord.endTime;
 	}
 }
 
@@ -84,6 +95,14 @@ function tryAdvanceStartTime(lines: LyricLine[]) {
 	for (let i = lines.length - 1; i >= 0; i--) {
 		const line = lines[i];
 		if (line.isBG) continue;
+		const attachedBgLine = lines[i + 1];
+		const hasAttachedBg = !!attachedBgLine?.isBG;
+
+		// 对带有和声的主行禁用“提前开始”优化，避免主行高亮动画过早触发，
+		// 导致到达实际演唱位置时看起来像“主行动画被跳过”。
+		if (hasAttachedBg) {
+			continue;
+		}
 
 		let prevLine: LyricLine | null = null;
 		if (i > 0) {
@@ -122,9 +141,8 @@ function tryAdvanceStartTime(lines: LyricLine[]) {
 			line.startTime = newStartTime;
 		}
 
-		const nextLine = lines[i + 1];
-		if (nextLine?.isBG) {
-			nextLine.startTime = line.startTime;
+		if (attachedBgLine?.isBG) {
+			attachedBgLine.startTime = line.startTime;
 		}
 	}
 }
